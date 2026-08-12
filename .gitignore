@@ -1,0 +1,15 @@
+.DS_Store
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+build/
+dist/
+*.egg-info/
+tmp/
+results/raw/
+profiles/**/*.ncu-rep
+profiles/**/*.nsys-rep
+
