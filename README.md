@@ -1,22 +1,38 @@
 # SR-States
 
-**Stochastic-rounding optimizers for low-precision state storage.**
+I am exploring whether optimizer states can be stored in BF16 without losing
+small, persistent updates. The optimizer math stays in FP32, while momentum
+states are stochastically rounded when they are written back to BF16.
 
-SR-States is a reference-to-GPU implementation study of optimizer states that
-are computed in FP32, stored in BF16, and stochastically rounded on writeback.
-The repository deliberately preserves each implementation stage so numerical
-correctness and performance changes can be compared rather than assumed.
+The repository currently includes:
 
-The current public milestone contains:
+- a bit-level FP32-to-BF16 stochastic-rounding implementation in PyTorch;
+- SGDM and AdamW with BF16 or FP32 state storage;
+- deterministic BF16 round-to-nearest variants for comparison;
+- functional update paths that can be passed to `torch.compile`;
+- numerical, statistical, parity, and checkpoint-reproducibility tests.
 
-- **Stage A:** readable PyTorch stochastic rounding, SGDM, and AdamW references;
-- **Stage B:** `torch.compile` entry points for the same functional updates;
-- deterministic BF16 round-to-nearest and FP32-state control variants;
-- statistical, edge-case, parity, and checkpoint-reproducibility tests.
+## Why stochastic rounding?
 
-Triton kernels are intentionally reserved for the next development milestone.
+For adjacent BF16 values $a \leq x \leq b$,
 
-## Example
+$$
+Q_{\mathrm{SR}}(x) =
+\begin{cases}
+a & \text{with probability } (b-x)/(b-a), \\
+b & \text{with probability } (x-a)/(b-a).
+\end{cases}
+$$
+
+Away from exceptional floating-point cases,
+$\mathbb{E}[Q_{\mathrm{SR}}(x)] = x$. A deterministic BF16 cast can repeatedly
+discard an update smaller than one ULP. Stochastic rounding gives that update a
+chance to change the stored value and preserves it in expectation.
+
+This is a one-step numerical property, not a guarantee that an entire training
+trajectory is unbiased. Training behavior still needs to be measured.
+
+## Usage
 
 ```python
 import torch
@@ -31,32 +47,21 @@ optimizer = AdamWReferenceSR(
 )
 ```
 
-Optimizer arithmetic is performed in FP32. With BF16 state, the updated first
-and second moments are stochastically rounded before storage.
+The first- and second-moment updates are evaluated in FP32. Only their stored
+representations are reduced to BF16.
 
-## Why stochastic rounding?
+## Reproducibility
 
-For adjacent representable values $a \leq x \leq b$, stochastic rounding uses
+Random choices are generated from a stateless 32-bit counter hash keyed by a
+seed and logical element offset. This makes the output independent of how a
+tensor is partitioned and allows optimizer checkpoints to resume from the same
+random position.
 
-$$
-Q_{\mathrm{SR}}(x) =
-\begin{cases}
-a & \text{with probability } (b-x)/(b-a), \\
-b & \text{with probability } (x-a)/(b-a).
-\end{cases}
-$$
+The generator is designed for reproducible numerical experiments. It is not
+Philox-compatible and should not be treated as a general-purpose or
+cryptographic random-number generator.
 
-Away from exceptional floating-point cases,
-$\mathbb{E}[Q_{\mathrm{SR}}(x)] = x$. This prevents deterministic rounding from
-systematically discarding persistent optimizer-state changes smaller than one
-BF16 ULP. Unbiased one-step rounding does **not** imply an unbiased training
-trajectory; training-quality claims require experiments.
-
-The implementation uses a stateless 32-bit counter hash keyed by seed and
-logical element offset. That makes random choices reproducible across tensor
-partitioning and optimizer checkpoint restoration.
-
-## Install and verify
+## Tests
 
 ```bash
 python -m venv .venv
@@ -65,27 +70,14 @@ pip install -e '.[dev]'
 pytest
 ```
 
+The tests cover BF16 neighbor membership, empirical rounding probabilities,
+sample-mean behavior, exceptional floating-point values, seed reproducibility,
+partition invariance, optimizer parity, state memory, and checkpoint restore.
+
 The package requires Python 3.10+ and PyTorch 2.4+.
 
-## Repository structure
-
-```text
-sr_states/reference/   readable rounding and functional optimizer updates
-sr_states/optim/       PyTorch Optimizer wrappers
-sr_states/compiled/    torch.compile baselines
-tests/                 numerical, parity, and reproducibility tests
-```
-
-## Current limitations
+## Limitations
 
 - BF16 and FP32 optimizer state only;
 - no sparse gradients, AMSGrad, differentiable optimizer, or distributed state;
-- the counter hash is reproducible but not Philox-compatible or cryptographic;
-- no GPU performance claim is made at this milestone.
-
-## Roadmap
-
-The next stages add a Triton BF16 stochastic-rounding cast primitive and fused
-Triton momentum SGD. Fused Triton AdamW, CUDA custom operators, profiling, and
-end-to-end transformer experiments follow after those foundations are verified.
-
+- no GPU performance results are reported yet.
