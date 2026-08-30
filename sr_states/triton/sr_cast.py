@@ -17,6 +17,9 @@ if triton is not None:
 
     @triton.jit
     def _u32_hash(counter):
+        # A small integer avalanche hash gives each logical element its own
+        # deterministic pseudo-random word. This is stateless and deliberately
+        # mirrors the arithmetic used by the PyTorch reference implementation.
         value = counter ^ (counter >> 16)
         value *= 0x7FEB352D
         value ^= value >> 15
@@ -25,6 +28,9 @@ if triton is not None:
 
     @triton.jit
     def _stochastic_bf16_value(value, counter):
+        # An FP32 value lies between two adjacent BF16 values according to its
+        # low 16 bits. Adding a uniform 16-bit integer before truncation rounds
+        # upward with probability low_bits / 2**16 and downward otherwise.
         bits = tl.cast(value, tl.uint32, bitcast=True)
         random_low = _u32_hash(counter) & 0xFFFF
         truncated = bits & 0xFFFF0000
@@ -47,9 +53,14 @@ if triton is not None:
         logical_offset,
         BLOCK_SIZE: tl.constexpr,
     ):
+        # The mask makes the final program safe when the tensor length is not a
+        # multiple of BLOCK_SIZE.
         offsets = tl.program_id(0) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
         mask = offsets < n_elements
         value = tl.load(input_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+
+        # Randomness is tied to the logical element index rather than the
+        # program/block layout, so changing BLOCK_SIZE does not change results.
         counter = (
             offsets.to(tl.uint32) + tl.cast(seed, tl.uint32) + tl.cast(logical_offset, tl.uint32)
         )
@@ -81,6 +92,8 @@ def sr_cast_bf16(
     if block_size not in {128, 256, 512, 1024}:
         raise ValueError("block_size must be one of 128, 256, 512, or 1024")
 
+    # Allocate the final storage type directly; the kernel computes each
+    # selected BF16 bit pattern in FP32 and lets the store preserve it exactly.
     output = torch.empty_like(x, dtype=torch.bfloat16)
     if x.numel() == 0:
         return output

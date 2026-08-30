@@ -1,7 +1,8 @@
 """Compilation entry points kept separate from the eager numerical reference.
 
-These helpers intentionally compile the same functional code used by Stage A.
-That controls for algorithmic differences when measuring what Inductor can fuse.
+These helpers intentionally compile the same functional code used by the eager
+reference. That controls for algorithmic differences when measuring what
+Inductor can fuse.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ def _compile(function: Callable[..., Any], **kwargs) -> Callable[..., Any]:
 
 
 def compile_sr_cast(**kwargs) -> Callable[..., torch.Tensor]:
-    """Compile the Stage A stochastic BF16 cast with ``torch.compile``."""
+    """Compile the reference stochastic BF16 cast with ``torch.compile``."""
 
     return _compile(stochastic_round_bf16, **kwargs)
 
