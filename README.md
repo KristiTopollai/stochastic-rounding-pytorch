@@ -10,6 +10,7 @@ The repository currently includes:
 - SGDM and AdamW with BF16 or FP32 state storage;
 - deterministic BF16 round-to-nearest variants for comparison;
 - functional update paths that can be passed to `torch.compile`;
+- an experimental Triton FP32-to-BF16 stochastic-rounding cast;
 - numerical, statistical, parity, and checkpoint-reproducibility tests.
 
 ## Why stochastic rounding?
@@ -80,4 +81,5 @@ The package requires Python 3.10+ and PyTorch 2.4+.
 
 - BF16 and FP32 optimizer state only;
 - no sparse gradients, AMSGrad, differentiable optimizer, or distributed state;
+- the Triton path has not yet been validated on an NVIDIA GPU;
 - no GPU performance results are reported yet.
