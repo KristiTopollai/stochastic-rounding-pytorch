@@ -18,7 +18,7 @@ The repository provides:
 - SGDM and AdamW references with selectable FP32 or BF16 state;
 - deterministic round-to-nearest baselines using the same update equations;
 - functional update paths compatible with `torch.compile`;
-- a single-pass Triton stochastic-cast kernel;
+- single-pass Triton stochastic-cast and fused momentum-SGD kernels;
 - numerical, statistical, parity, and checkpoint-reproducibility tests.
 
 ## Why stochastic rounding?
@@ -104,6 +104,23 @@ Both paths use the same logical counter scheme. Once GPU validation is
 available, equal `seed` and `offset` values are expected to produce bitwise
 matching BF16 outputs.
 
+The fused optimizer path updates the parameter and BF16 momentum buffer in one
+Triton program:
+
+```python
+from sr_states.triton import SGDMTriton
+
+optimizer = SGDMTriton(
+    model.parameters(),
+    lr=1e-2,
+    momentum=0.9,
+    rounding="stochastic",
+    seed=2026,
+)
+```
+
+This path currently requires contiguous CUDA parameters and gradients.
+
 ## Design notes
 
 The cast works directly on the IEEE-754 representation of each FP32 input. Its
@@ -169,7 +186,6 @@ an available NVIDIA GPU.
 - BF16 and FP32 optimizer state only;
 - no sparse gradients, AMSGrad, differentiable optimizer, or distributed state;
 - the Triton path has not yet been validated on an NVIDIA GPU;
-- the Triton kernel currently covers casting only; optimizer updates still use
-  the PyTorch reference paths;
+- fused Triton optimizer support currently covers momentum SGD but not AdamW;
 - statistical unbiasedness of one cast does not imply an unbiased optimization
   trajectory.
