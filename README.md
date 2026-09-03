@@ -170,7 +170,7 @@ Triton/reference equivalence.
 PyTorch stochastic rounding, the compiled reference, and the Triton cast:
 
 ```bash
-python benchmarks/bench_sr_cast.py \
+python -m benchmarks.bench_sr_cast \
   --sizes 1048576 4194304 16777216 \
   --warmup 20 \
   --repetitions 100 \
@@ -180,6 +180,22 @@ python benchmarks/bench_sr_cast.py \
 The benchmark reports median latency, elements per second, and effective
 bandwidth. No performance numbers are included until they can be collected on
 an available NVIDIA GPU.
+
+The momentum-SGD benchmark compares the eager reference, `torch.compile`, and
+the fused Triton update using independent input state for each method:
+
+```bash
+python -m benchmarks.bench_sgdm \
+  --sizes 1048576 4194304 16777216 \
+  --parameter-dtype bf16 \
+  --block-size 256 \
+  --output results/sgdm.csv
+```
+
+Reported bandwidth is logical algorithmic traffic: parameter, gradient, and
+momentum reads plus parameter and momentum writes. It should be used to compare
+implementations within the same dtype configuration, rather than as a direct
+measurement of every byte moved by eager intermediate tensors.
 
 ## Limitations
 

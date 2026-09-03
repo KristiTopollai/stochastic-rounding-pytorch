@@ -3,8 +3,8 @@ from __future__ import annotations
 import argparse
 
 import torch
-from _utils import cuda_median_ms, result_row, write_rows
 
+from benchmarks._utils import cuda_median_ms, result_row, write_rows
 from sr_states.compiled import compile_sr_cast
 from sr_states.reference import stochastic_round_bf16
 from sr_states.triton import is_triton_available, sr_cast_bf16
