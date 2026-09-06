@@ -17,7 +17,7 @@ triton = ["triton>=3.0; platform_system == 'Linux'"]
 dev = ["numpy>=1.26", "pytest>=8", "pytest-cov>=5", "ruff>=0.6"]
 
 [tool.setuptools.packages.find]
-include = ["sr_states*"]
+include = ["sr_states*", "benchmarks*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
