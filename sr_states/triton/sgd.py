@@ -155,6 +155,20 @@ class SGDMTriton(Optimizer):
         }
         super().__init__(params, defaults)
 
+    def __setstate__(self, state) -> None:
+        super().__setstate__(state)
+        # Optimizer.load_state_dict casts floating state to the parameter
+        # dtype before calling this method. Restore the kernel's BF16 storage
+        # contract, including when parameters use FP32. BF16 -> FP32 -> BF16
+        # is lossless, and the base loader has already selected the device.
+        for group in self.param_groups:
+            for parameter in group["params"]:
+                parameter_state = self.state.get(parameter, {})
+                if "momentum_buffer" in parameter_state:
+                    parameter_state["momentum_buffer"] = parameter_state["momentum_buffer"].to(
+                        dtype=torch.bfloat16
+                    )
+
     @torch.no_grad()
     def step(self, closure=None):
         loss = None

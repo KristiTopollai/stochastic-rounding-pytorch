@@ -72,25 +72,33 @@ def test_fused_sgdm_is_invariant_to_block_size():
         assert torch.equal(momentum, outputs[0][1])
 
 
-def test_triton_optimizer_checkpoint_restores_rng_position():
-    initial = torch.linspace(-1, 1, 4096, device="cuda")
+@pytest.mark.parametrize("rounding", ["stochastic", "nearest"])
+@pytest.mark.parametrize("parameter_dtype", [torch.float32, torch.bfloat16])
+def test_triton_optimizer_checkpoint_restores_rng_position(rounding, parameter_dtype):
+    initial = torch.linspace(-1, 1, 4099, device="cuda", dtype=parameter_dtype)
     first = torch.nn.Parameter(initial.clone())
-    first_optimizer = SGDMTriton([first], lr=0.01, seed=44)
+    first_optimizer = SGDMTriton([first], lr=0.01, rounding=rounding, seed=44)
     first.grad = torch.sin(initial)
     first_optimizer.step()
 
     resumed = torch.nn.Parameter(first.detach().clone())
     resumed_optimizer = SGDMTriton([resumed], lr=0.01, seed=999)
     resumed_optimizer.load_state_dict(copy.deepcopy(first_optimizer.state_dict()))
-    gradient = torch.cos(initial)
-    first.grad = gradient.clone()
-    resumed.grad = gradient.clone()
-    first_optimizer.step()
-    resumed_optimizer.step()
+    assert resumed_optimizer.state[resumed]["momentum_buffer"].dtype == torch.bfloat16
+    assert resumed_optimizer.state[resumed]["momentum_buffer"].device == resumed.device
 
-    assert torch.equal(first, resumed)
-    assert torch.equal(
-        first_optimizer.state[first]["momentum_buffer"],
-        resumed_optimizer.state[resumed]["momentum_buffer"],
-    )
-    assert first_optimizer.param_groups[0]["sr_offset"] == 2 * initial.numel()
+    for step in range(1, 4):
+        gradient = torch.cos(initial.float() * step).to(parameter_dtype)
+        first.grad = gradient.clone()
+        resumed.grad = gradient.clone()
+        first_optimizer.step()
+        resumed_optimizer.step()
+
+        assert torch.equal(first, resumed)
+        assert torch.equal(
+            first_optimizer.state[first]["momentum_buffer"],
+            resumed_optimizer.state[resumed]["momentum_buffer"],
+        )
+        expected_offset = (step + 1) * initial.numel()
+        assert first_optimizer.param_groups[0]["sr_offset"] == expected_offset
+        assert resumed_optimizer.param_groups[0]["sr_offset"] == expected_offset

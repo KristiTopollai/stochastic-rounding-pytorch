@@ -120,6 +120,8 @@ optimizer = SGDMTriton(
 ```
 
 This path currently requires contiguous CUDA parameters and gradients.
+Checkpoint loading preserves BF16 momentum storage for both FP32 and BF16
+parameters, along with each parameter group's seed and logical RNG offset.
 
 ## Design notes
 
