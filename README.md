@@ -11,7 +11,7 @@ fused Triton updates, plus standalone SR and nearest-even (NR) casts.
 
 ## Install
 
-Python 3.10+ and PyTorch 2.4+. Triton requires Linux, an NVIDIA GPU, and
+Python 3.10+ and PyTorch 2.5+. Triton requires Linux, an NVIDIA GPU, and
 CUDA-enabled PyTorch.
 
 ```bash
