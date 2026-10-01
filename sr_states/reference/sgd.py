@@ -36,3 +36,11 @@ def sgdm_step(
     else:
         stored_momentum = u32.to(torch.bfloat16)
     return updated_parameter, stored_momentum
+
+
+@torch.no_grad()
+def sgdm_step_(parameter, gradient, momentum, **kwargs) -> None:
+    """Apply the reference update in place, including state write-back."""
+    updated_p, updated_m = sgdm_step(parameter, gradient, momentum, **kwargs)
+    parameter.copy_(updated_p)
+    momentum.copy_(updated_m)

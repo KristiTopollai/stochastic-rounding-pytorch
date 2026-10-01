@@ -5,12 +5,11 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 import torch
-from torch.optim import Optimizer
+
+from sr_states.optim._state import StateOptimizer
 
 from ._common import require_triton, tl, triton
-
-_SUPPORTED_BLOCK_SIZES = {128, 256, 512, 1024}
-
+from ._optimizer import nonnegative, validate_options, validate_tensors
 
 if triton is not None:
     from .sr_cast import _stochastic_bf16_value
@@ -28,7 +27,7 @@ if triton is not None:
         STOCHASTIC: tl.constexpr,
         BLOCK_SIZE: tl.constexpr,
     ):
-        offsets = tl.program_id(0) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+        offsets = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
         mask = offsets < n_elements
 
         # Storage may be BF16, but the optimizer recurrence is evaluated in
@@ -72,33 +71,18 @@ def triton_sgdm_step_(
 
     ``parameter``, ``gradient``, and ``momentum`` must be same-shaped,
     contiguous CUDA tensors on one device. Parameter and gradient storage may
-    be FP32 or BF16; momentum storage is BF16. Arithmetic is performed in FP32.
+    be FP32 or BF16; momentum storage may be FP32 or BF16. Arithmetic is performed in FP32.
 
     The function mutates ``parameter`` and ``momentum`` and returns ``None``.
     ``offset`` is the logical starting index for counter-based randomness.
     """
 
     require_triton()
-    if rounding not in {"stochastic", "nearest"}:
-        raise ValueError("rounding must be 'stochastic' or 'nearest'")
-    if block_size not in _SUPPORTED_BLOCK_SIZES:
-        raise ValueError("block_size must be one of 128, 256, 512, or 1024")
-
-    tensors = (parameter, gradient, momentum)
-    if any(not tensor.is_cuda for tensor in tensors):
-        raise ValueError("triton_sgdm_step_ requires CUDA tensors")
-    if len({tensor.device for tensor in tensors}) != 1:
-        raise ValueError("parameter, gradient, and momentum must be on the same CUDA device")
-    if parameter.shape != gradient.shape or parameter.shape != momentum.shape:
-        raise ValueError("parameter, gradient, and momentum must have identical shapes")
-    if any(not tensor.is_contiguous() for tensor in tensors):
-        raise ValueError("triton_sgdm_step_ requires contiguous tensors")
-    if parameter.dtype not in {torch.float32, torch.bfloat16}:
-        raise TypeError("parameter must be FP32 or BF16")
-    if gradient.dtype not in {torch.float32, torch.bfloat16}:
-        raise TypeError("gradient must be FP32 or BF16")
-    if momentum.dtype != torch.bfloat16:
-        raise TypeError("momentum state must use BF16 storage")
+    validate_options(rounding, block_size, momentum.dtype)
+    nonnegative("learning rate", lr)
+    if not 0 <= momentum_factor < 1:
+        raise ValueError(f"invalid momentum value: {momentum_factor}")
+    validate_tensors(parameter, gradient, momentum)
     if parameter.numel() == 0:
         return
 
@@ -113,12 +97,13 @@ def triton_sgdm_step_(
             momentum_factor,
             seed=int(seed) & 0xFFFFFFFF,
             logical_offset=int(offset) & 0xFFFFFFFF,
-            STOCHASTIC=rounding == "stochastic",
+            STOCHASTIC=rounding == "stochastic" and momentum.dtype == torch.bfloat16,
             BLOCK_SIZE=block_size,
+            num_warps=4,
         )
 
 
-class SGDMTriton(Optimizer):
+class SGDMTriton(StateOptimizer):
     """Momentum SGD backed by the fused Triton BF16-state kernel.
 
     The seed and logical RNG offset live in each parameter group, so the
@@ -126,48 +111,34 @@ class SGDMTriton(Optimizer):
     the next stochastic update after checkpoint restore.
     """
 
+    _state_names = ("momentum_buffer",)
+
     def __init__(
         self,
         params: Iterable[torch.Tensor],
         lr: float,
         momentum: float = 0.9,
         *,
+        state_dtype: torch.dtype = torch.bfloat16,
         rounding: str = "stochastic",
         seed: int = 0,
         block_size: int = 256,
     ) -> None:
-        if lr < 0:
-            raise ValueError(f"invalid learning rate: {lr}")
+        nonnegative("learning rate", lr)
         if not 0 <= momentum < 1:
             raise ValueError(f"invalid momentum value: {momentum}")
-        if rounding not in {"stochastic", "nearest"}:
-            raise ValueError("rounding must be 'stochastic' or 'nearest'")
-        if block_size not in _SUPPORTED_BLOCK_SIZES:
-            raise ValueError("block_size must be one of 128, 256, 512, or 1024")
+        validate_options(rounding, block_size, state_dtype)
 
         defaults = {
             "lr": lr,
             "momentum": momentum,
+            "state_dtype": state_dtype,
             "rounding": rounding,
             "sr_seed": int(seed),
             "sr_offset": 0,
             "block_size": block_size,
         }
         super().__init__(params, defaults)
-
-    def __setstate__(self, state) -> None:
-        super().__setstate__(state)
-        # Optimizer.load_state_dict casts floating state to the parameter
-        # dtype before calling this method. Restore the kernel's BF16 storage
-        # contract, including when parameters use FP32. BF16 -> FP32 -> BF16
-        # is lossless, and the base loader has already selected the device.
-        for group in self.param_groups:
-            for parameter in group["params"]:
-                parameter_state = self.state.get(parameter, {})
-                if "momentum_buffer" in parameter_state:
-                    parameter_state["momentum_buffer"] = parameter_state["momentum_buffer"].to(
-                        dtype=torch.bfloat16
-                    )
 
     @torch.no_grad()
     def step(self, closure=None):
@@ -176,8 +147,8 @@ class SGDMTriton(Optimizer):
             with torch.enable_grad():
                 loss = closure()
 
+        offset = self._next_offset()
         for group in self.param_groups:
-            offset = int(group["sr_offset"])
             for parameter in group["params"]:
                 if parameter.grad is None:
                     continue
@@ -188,7 +159,7 @@ class SGDMTriton(Optimizer):
                 if "momentum_buffer" not in state:
                     state["momentum_buffer"] = torch.zeros_like(
                         parameter,
-                        dtype=torch.bfloat16,
+                        dtype=group.get("state_dtype", torch.bfloat16),
                         memory_format=torch.preserve_format,
                     )
                 triton_sgdm_step_(
@@ -203,5 +174,5 @@ class SGDMTriton(Optimizer):
                     block_size=group["block_size"],
                 )
                 offset += parameter.numel()
-            group["sr_offset"] = offset
+                group["sr_offset"] = offset
         return loss

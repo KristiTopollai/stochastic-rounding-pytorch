@@ -7,14 +7,27 @@ on:
 jobs:
   cpu:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - python: "3.10"
+            torch: "2.4.0"
+          - python: "3.12"
+            torch: "latest"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
           cache: pip
+      - if: matrix.torch != 'latest'
+        run: pip install torch==${{ matrix.torch }} --index-url https://download.pytorch.org/whl/cpu
       - run: pip install -e '.[dev]'
       - run: ruff check .
       - run: ruff format --check .
       - run: pytest
-
+      - run: pip wheel . --no-deps --wheel-dir dist
+      - run: pip install --force-reinstall --no-deps dist/*.whl
+      - run: |
+          cd "$RUNNER_TEMP"
+          python -c "from sr_states.triton import AdamWTriton, SGDMTriton; import benchmarks.bench_states"

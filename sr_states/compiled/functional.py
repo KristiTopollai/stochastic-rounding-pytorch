@@ -12,9 +12,9 @@ from typing import Any
 
 import torch
 
-from sr_states.reference.adamw import adamw_step
+from sr_states.reference.adamw import adamw_step, adamw_step_
 from sr_states.reference.rounding import stochastic_round_bf16
-from sr_states.reference.sgd import sgdm_step
+from sr_states.reference.sgd import sgdm_step, sgdm_step_
 
 
 def _compile(function: Callable[..., Any], **kwargs) -> Callable[..., Any]:
@@ -41,3 +41,13 @@ def compile_adamw_step(
     """Compile the functional AdamW reference."""
 
     return _compile(adamw_step, **kwargs)
+
+
+def compile_sgdm_step_(**kwargs) -> Callable[..., None]:
+    """Compile the complete in-place SGDM update."""
+    return _compile(sgdm_step_, **kwargs)
+
+
+def compile_adamw_step_(**kwargs) -> Callable[..., None]:
+    """Compile the complete in-place AdamW update."""
+    return _compile(adamw_step_, **kwargs)

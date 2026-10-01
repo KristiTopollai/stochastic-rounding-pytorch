@@ -5,18 +5,21 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 import torch
-from torch.optim import Optimizer
 
 from sr_states.reference.sgd import sgdm_step
 
+from ._state import StateOptimizer
 
-class SGDMReferenceSR(Optimizer):
+
+class SGDMReferenceSR(StateOptimizer):
     """Momentum SGD with FP32 math and FP32/BF16 state storage.
 
     BF16 state uses stochastic rounding by default. RNG state is represented by
     ``sr_seed`` and ``sr_offset`` in each parameter group, so optimizer
     ``state_dict`` checkpoints reproduce the subsequent random choices.
     """
+
+    _state_names = ("momentum_buffer",)
 
     def __init__(
         self,
@@ -53,8 +56,8 @@ class SGDMReferenceSR(Optimizer):
             with torch.enable_grad():
                 loss = closure()
 
+        offset = self._next_offset()
         for group in self.param_groups:
-            offset = int(group["sr_offset"])
             for parameter in group["params"]:
                 if parameter.grad is None:
                     continue
@@ -79,7 +82,7 @@ class SGDMReferenceSR(Optimizer):
                 parameter.copy_(updated_p)
                 state["momentum_buffer"].copy_(updated_u)
                 offset += parameter.numel()
-            group["sr_offset"] = offset
+                group["sr_offset"] = offset
         return loss
 
 

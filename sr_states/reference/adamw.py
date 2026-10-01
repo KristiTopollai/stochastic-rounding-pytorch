@@ -53,3 +53,12 @@ def adamw_step(
     else:
         stored_m, stored_v = m32.to(torch.bfloat16), v32.to(torch.bfloat16)
     return updated_parameter, stored_m, stored_v
+
+
+@torch.no_grad()
+def adamw_step_(parameter, gradient, exp_avg, exp_avg_sq, **kwargs) -> None:
+    """Apply the reference update in place, including state write-back."""
+    updated_p, updated_m, updated_v = adamw_step(parameter, gradient, exp_avg, exp_avg_sq, **kwargs)
+    parameter.copy_(updated_p)
+    exp_avg.copy_(updated_m)
+    exp_avg_sq.copy_(updated_v)

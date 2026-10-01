@@ -5,13 +5,16 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 import torch
-from torch.optim import Optimizer
 
 from sr_states.reference.adamw import adamw_step
 
+from ._state import StateOptimizer
 
-class AdamWReferenceSR(Optimizer):
+
+class AdamWReferenceSR(StateOptimizer):
     """AdamW with FP32 arithmetic and FP32/BF16 moment-state storage."""
+
+    _state_names = ("exp_avg", "exp_avg_sq")
 
     def __init__(
         self,
@@ -57,8 +60,8 @@ class AdamWReferenceSR(Optimizer):
             with torch.enable_grad():
                 loss = closure()
 
+        offset = self._next_offset()
         for group in self.param_groups:
-            offset = int(group["sr_offset"])
             beta1, beta2 = group["betas"]
             for parameter in group["params"]:
                 if parameter.grad is None:
@@ -95,7 +98,7 @@ class AdamWReferenceSR(Optimizer):
                 state["exp_avg"].copy_(updated_m)
                 state["exp_avg_sq"].copy_(updated_v)
                 offset += 2 * parameter.numel()
-            group["sr_offset"] = offset
+                group["sr_offset"] = offset
         return loss
 
 

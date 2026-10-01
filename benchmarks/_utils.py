@@ -25,13 +25,17 @@ def nonnegative_int(value: str) -> int:
     return parsed
 
 
-def cuda_samples_ms(function, *, warmup: int, repetitions: int) -> list[float]:
+def cuda_samples_ms(function, *, warmup: int, repetitions: int, before_call=None) -> list[float]:
     if warmup < 0 or repetitions <= 0:
         raise ValueError("warmup must be nonnegative and repetitions must be positive")
     # Always finish compilation and lazy initialization outside the timed region,
     # including when the caller explicitly requests zero warmup iterations.
+    if before_call is not None:
+        before_call()
     function()
     for _ in range(warmup):
+        if before_call is not None:
+            before_call()
         function()
     torch.cuda.synchronize()
 
@@ -43,6 +47,8 @@ def cuda_samples_ms(function, *, warmup: int, repetitions: int) -> list[float]:
     end.synchronize()
     samples = []
     for _ in range(repetitions):
+        if before_call is not None:
+            before_call()
         start.record()
         function()
         end.record()
