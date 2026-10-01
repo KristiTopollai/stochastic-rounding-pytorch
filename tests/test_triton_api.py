@@ -3,11 +3,18 @@ import copy
 import pytest
 import torch
 
-from sr_states.triton import SGDMTriton, is_triton_available, sr_cast_bf16, triton_sgdm_step_
+from sr_states.triton import (
+    SGDMTriton,
+    is_triton_available,
+    rn_cast_bf16,
+    sr_cast_bf16,
+    triton_sgdm_step_,
+)
 
 
 def test_optional_triton_api_imports_without_triton_installed():
     assert callable(sr_cast_bf16)
+    assert callable(rn_cast_bf16)
     assert callable(triton_sgdm_step_)
     assert issubclass(SGDMTriton, torch.optim.Optimizer)
     assert isinstance(is_triton_available(), bool)

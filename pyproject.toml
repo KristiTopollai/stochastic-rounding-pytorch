@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sr-states"
 version = "0.1.0"
-description = "Stochastic-rounding optimizer kernels for low-precision GPU state storage"
+description = "FP32-to-BF16 stochastic rounding in PyTorch and Triton"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
