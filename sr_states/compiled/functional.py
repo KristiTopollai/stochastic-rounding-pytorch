@@ -45,9 +45,10 @@ def compile_adamw_step(
 
 def compile_sgdm_step_(**kwargs) -> Callable[..., None]:
     """Compile the complete in-place SGDM update."""
-    return _compile(sgdm_step_, **kwargs)
+    # Compile distinct function bodies rather than the shared no_grad wrapper.
+    return torch.no_grad()(_compile(sgdm_step_.__wrapped__, **kwargs))
 
 
 def compile_adamw_step_(**kwargs) -> Callable[..., None]:
     """Compile the complete in-place AdamW update."""
-    return _compile(adamw_step_, **kwargs)
+    return torch.no_grad()(_compile(adamw_step_.__wrapped__, **kwargs))

@@ -99,3 +99,18 @@ def test_state_resets_stay_outside_timed_events(monkeypatch):
         "update",
         "end",
     ]
+
+
+@pytest.mark.parametrize("kind", ["sgdm", "adamw"])
+def test_compiled_inplace_update_accepts_leaf_parameters(kind):
+    compiler = compile_adamw_step_ if kind == "adamw" else compile_sgdm_step_
+    compiled = compiler(backend="eager", fullgraph=True, dynamic=True)
+    inputs = prepare_inputs(kind, 17, count=1, dtype=torch.float32, device="cpu")
+    case = build_case(
+        inputs, optimizer=kind, backend="compiled", policy="bf16_sr", compiled=compiled
+    )
+    tensors = list(case.buffers[0])
+    tensors[0] = torch.nn.Parameter(tensors[0])
+    for offset in (0, 31, 2**32 + 31):
+        compiled(*tensors, **case.options, offset=offset, state_dtype=case.state_dtype)
+    assert tensors[0].grad is None

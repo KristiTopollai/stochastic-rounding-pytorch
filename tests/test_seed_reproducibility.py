@@ -26,3 +26,13 @@ def test_logical_offsets_make_partitioning_invariant():
 def test_different_seed_changes_non_exact_choices():
     x = torch.full((4096,), 1.0 + 2.0**-9, dtype=torch.float32)
     assert not torch.equal(stochastic_round_bf16(x, seed=1), stochastic_round_bf16(x, seed=2))
+
+
+def test_counter_periodicity_for_large_python_integers():
+    x = torch.linspace(-1, 1, 1003)
+    expected = stochastic_round_bf16(x, seed=7, offset=31)
+    for periods in (-(2**60), -1, 1, 2**60):
+        actual = stochastic_round_bf16(
+            x, seed=7 + periods * 2**32, offset=31 + periods * 2**32
+        )
+        assert torch.equal(actual, expected)

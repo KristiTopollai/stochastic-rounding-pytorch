@@ -37,7 +37,7 @@ def _u32_hash(indices: torch.Tensor, seed: int) -> torch.Tensor:
     # arguments become SymInts, whose scalar arithmetic can otherwise be lowered
     # as FP32 by Inductor before these bitwise operations.
     seed_tensor = torch.scalar_tensor(
-        int(seed) & _U32_MASK, dtype=torch.int64, device=indices.device
+        int(seed) % (1 << 32), dtype=torch.int64, device=indices.device
     )
     value = (indices.to(torch.int64) + seed_tensor) & _U32_MASK
     value = value ^ (value >> 16)
@@ -83,7 +83,7 @@ def stochastic_round_bf16(
     flat = x.contiguous().reshape(-1)
     bits = _fp32_to_u32(flat)
     indices = torch.arange(flat.numel(), dtype=torch.int64, device=x.device)
-    offset_tensor = torch.scalar_tensor(int(offset), dtype=torch.int64, device=x.device)
+    offset_tensor = torch.scalar_tensor(int(offset) % (1 << 32), dtype=torch.int64, device=x.device)
     random_low = _u32_hash(indices + offset_tensor, seed) & 0xFFFF
 
     truncated = bits & _BF16_MASK

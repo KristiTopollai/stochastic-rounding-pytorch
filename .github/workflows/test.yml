@@ -8,6 +8,7 @@ jobs:
   cpu:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         include:
           - python: "3.10"
@@ -22,6 +23,8 @@ jobs:
           cache: pip
       - if: matrix.torch != 'latest'
         run: pip install torch==${{ matrix.torch }} --index-url https://download.pytorch.org/whl/cpu
+      - if: matrix.torch == 'latest'
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - run: pip install -e '.[dev]'
       - run: ruff check .
       - run: ruff format --check .
