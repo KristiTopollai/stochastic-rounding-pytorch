@@ -18,39 +18,39 @@ The quadratic label gives **total parameters / tensor count**; the MLP has width
 
 Times below are synchronized wall latency in **microseconds**, including the
 event wait, reported as the median of three process medians (100 samples per
-process). `native_nr` is the eager FP32 reference using PyTorch BF16 casts; it is
-not `torch.optim.AdamW` or `torch.optim.SGD`. Compiled SR compiles each tensor update
-while optimizer bookkeeping remains in Python.
+process). Compiled SR compiles each tensor update while optimizer bookkeeping
+remains in Python. Archived `native_nr` rows retain the eager FP32 reference
+using PyTorch BF16 casts; they are omitted from these tables.
 
-| Optimizer | Workload: total / tensors | Native NR | Triton NR | Eager SR | Compiled SR | Triton SR |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| AdamW | Quadratic 1,048,576 / 1 | 152.00 | 84.49 | 647.75 | 135.37 | 85.19 |
-| AdamW | Quadratic 1,048,576 / 32 | 3,400.10 | 1,279.72 | 18,701.92 | 2,564.69 | 1,296.36 |
-| AdamW | Quadratic 16,777,216 / 1 | 627.87 | 145.51 | 5,033.19 | 381.07 | 145.90 |
-| AdamW | Quadratic 16,777,216 / 32 | 3,419.33 | 1,304.61 | 18,717.01 | 2,593.57 | 1,302.90 |
-| AdamW | MLP 813,072 / 10 | 1,225.04 | 516.81 | 6,209.80 | 1,198.95 | 520.50 |
-| SGDM | Quadratic 1,048,576 / 1 | 85.69 | 78.23 | 345.00 | 115.28 | 79.68 |
-| SGDM | Quadratic 1,048,576 / 32 | 1,561.20 | 1,055.79 | 9,105.32 | 1,955.62 | 1,067.28 |
-| SGDM | Quadratic 16,777,216 / 1 | 289.72 | 122.31 | 2,494.40 | 147.20 | 122.94 |
-| SGDM | Quadratic 16,777,216 / 32 | 1,561.73 | 1,071.03 | 9,169.62 | 1,952.92 | 1,080.12 |
-| SGDM | MLP 813,072 / 10 | 595.11 | 453.51 | 3,141.02 | 942.90 | 455.33 |
+| Optimizer | Workload: total / tensors | Triton NR | Eager SR | Compiled SR | Triton SR |
+| --- | --- | ---: | ---: | ---: | ---: |
+| AdamW | Quadratic 1,048,576 / 1 | 84.49 | 647.75 | 135.37 | 85.19 |
+| AdamW | Quadratic 1,048,576 / 32 | 1,279.72 | 18,701.92 | 2,564.69 | 1,296.36 |
+| AdamW | Quadratic 16,777,216 / 1 | 145.51 | 5,033.19 | 381.07 | 145.90 |
+| AdamW | Quadratic 16,777,216 / 32 | 1,304.61 | 18,717.01 | 2,593.57 | 1,302.90 |
+| AdamW | MLP 813,072 / 10 | 516.81 | 6,209.80 | 1,198.95 | 520.50 |
+| SGDM | Quadratic 1,048,576 / 1 | 78.23 | 345.00 | 115.28 | 79.68 |
+| SGDM | Quadratic 1,048,576 / 32 | 1,055.79 | 9,105.32 | 1,955.62 | 1,067.28 |
+| SGDM | Quadratic 16,777,216 / 1 | 122.31 | 2,494.40 | 147.20 | 122.94 |
+| SGDM | Quadratic 16,777,216 / 32 | 1,071.03 | 9,169.62 | 1,952.92 | 1,080.12 |
+| SGDM | MLP 813,072 / 10 | 453.51 | 3,141.02 | 942.90 | 455.33 |
 
 Speedups are medians of **within-repeat ratios**, rather than ratios of the
 aggregate times above. Overhead is `100 * (SR / NR - 1)` in each repeat; its range
 is the minimum to maximum of three repeats, not a confidence interval.
 
-| Optimizer | Workload: total / tensors | vs. native NR | vs. eager SR | vs. compiled SR | Matched Triton NR overhead: median [range] |
-| --- | --- | ---: | ---: | ---: | ---: |
-| AdamW | Quadratic 1,048,576 / 1 | 1.78× | 7.67× | 1.57× | +1.50% [-0.44%, +1.56%] |
-| AdamW | Quadratic 1,048,576 / 32 | 2.61× | 14.23× | 1.96× | +1.83% [+1.30%, +1.86%] |
-| AdamW | Quadratic 16,777,216 / 1 | 4.30× | 34.50× | 2.61× | +0.27% [+0.24%, +0.36%] |
-| AdamW | Quadratic 16,777,216 / 32 | 2.62× | 14.27× | 1.98× | -0.13% [-0.34%, +0.28%] |
-| AdamW | MLP 813,072 / 10 | 2.34× | 11.90× | 2.28× | +1.44% [-1.10%, +1.62%] |
-| SGDM | Quadratic 1,048,576 / 1 | 1.10× | 4.31× | 1.45× | +1.14% [-0.46%, +1.86%] |
-| SGDM | Quadratic 1,048,576 / 32 | 1.45× | 8.43× | 1.80× | +1.09% [+1.01%, +1.56%] |
-| SGDM | Quadratic 16,777,216 / 1 | 2.36× | 20.29× | 1.20× | +0.25% [+0.11%, +0.93%] |
-| SGDM | Quadratic 16,777,216 / 32 | 1.45× | 8.45× | 1.80× | +0.70% [+0.20%, +0.85%] |
-| SGDM | MLP 813,072 / 10 | 1.31× | 6.86× | 2.05× | +0.74% [-0.16%, +1.31%] |
+| Optimizer | Workload: total / tensors | vs. eager SR | vs. compiled SR | Matched Triton NR overhead: median [range] |
+| --- | --- | ---: | ---: | ---: |
+| AdamW | Quadratic 1,048,576 / 1 | 7.67× | 1.57× | +1.50% [-0.44%, +1.56%] |
+| AdamW | Quadratic 1,048,576 / 32 | 14.23× | 1.96× | +1.83% [+1.30%, +1.86%] |
+| AdamW | Quadratic 16,777,216 / 1 | 34.50× | 2.61× | +0.27% [+0.24%, +0.36%] |
+| AdamW | Quadratic 16,777,216 / 32 | 14.27× | 1.98× | -0.13% [-0.34%, +0.28%] |
+| AdamW | MLP 813,072 / 10 | 11.90× | 2.28× | +1.44% [-1.10%, +1.62%] |
+| SGDM | Quadratic 1,048,576 / 1 | 4.31× | 1.45× | +1.14% [-0.46%, +1.86%] |
+| SGDM | Quadratic 1,048,576 / 32 | 8.43× | 1.80× | +1.09% [+1.01%, +1.56%] |
+| SGDM | Quadratic 16,777,216 / 1 | 20.29× | 1.20× | +0.25% [+0.11%, +0.93%] |
+| SGDM | Quadratic 16,777,216 / 32 | 8.45× | 1.80× | +0.70% [+0.20%, +0.85%] |
+| SGDM | MLP 813,072 / 10 | 6.86× | 2.05× | +0.74% [-0.16%, +1.31%] |
 
 On the largest single tensor, Triton SR is **2.61× faster than compiled SR for
 AdamW** and **1.20× for SGDM**. Matched Triton NR overhead is **+0.27%** and

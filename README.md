@@ -61,14 +61,13 @@ optimizer benchmarks, saving samples and environment details. The H200 run
 passed **299 tests**; two tests requiring a second GPU were skipped.
 
 `bench_optimizer_steps` times full `optimizer.step()` calls on diagonal quadratics
-and MLP regression, with FP32 parameters/gradients and BF16 states. Native NR is
-the eager FP32 reference using PyTorch's BF16 cast. Compiled SR compiles each
-tensor update; bookkeeping remains in Python. Gradients, initialization, and
-compilation are excluded; steps and RNG counters advance normally.
+and MLP regression, with FP32 parameters/gradients and BF16 states. Compiled SR
+compiles each tensor update; bookkeeping remains in Python. Gradients,
+initialization, and compilation are excluded; steps and RNG counters advance normally.
 
 CSVs contain synchronized wall, CUDA-event, and CPU-submission latency, plus
-speedups against both NR baselines. Wall latency includes the event wait;
-CUDA-event latency includes host submission gaps. CUDA graphs are disabled.
+paired speedups. Wall latency includes the event wait; CUDA-event latency includes
+host submission gaps. CUDA graphs are disabled.
 Quadratic `--sizes` counts total parameters split across `--tensors` (default 1
 and 32). In the fixed-input `bench_sgdm`/`bench_adamw` microbenchmarks, `--sizes`
 is elements per tensor; inputs, counters, and step numbers reset outside timing.
@@ -82,7 +81,6 @@ Full optimizer steps, one tensor with 16,777,216 FP32 parameters and BF16 states
 
 | Method | AdamW (µs, wall) | SGDM (µs, wall) |
 | --- | ---: | ---: |
-| Native NR reference | 627.87 | 289.72 |
 | Matched Triton NR | 145.51 | 122.31 |
 | Eager SR | 5,033.19 | 2,494.40 |
 | Compiled SR | 381.07 | 147.20 |
