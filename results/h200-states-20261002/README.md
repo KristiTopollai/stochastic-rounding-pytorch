@@ -104,12 +104,6 @@ methods are retained in the raw files and [summary.csv](report/summary.csv).
   describe synthetic optimizer timing, not end-to-end training throughput or
   convergence quality.
 
-The first attempt (job `18993594`) stopped before timing because the newly added
-optimizer tests left Dynamo graphs cached for later tests, exhausting SGDM’s
-per-function compilation limit. The recorded patch resets the cache between
-these independent tests while retaining it within each test for warm-replay and
-timed-compilation checks. The successful run includes that patch.
-
 ## Artifacts and reproduction
 
 - [Summary medians and process ranges](report/summary.csv): all methods and timing channels.

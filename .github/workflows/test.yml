@@ -25,11 +25,15 @@ jobs:
         run: pip install torch==${{ matrix.torch }} --index-url https://download.pytorch.org/whl/cpu
       - if: matrix.torch == 'latest'
         run: pip install torch --index-url https://download.pytorch.org/whl/cpu
-      - run: pip install -e '.[dev]'
+      - run: pip install -e '.[dev]' build twine
       - run: ruff check .
       - run: ruff format --check .
       - run: pytest
-      - run: pip wheel . --no-deps --wheel-dir dist
+      - run: |
+          python results/h200-states-20261002/summarize.py --output "$RUNNER_TEMP/results-audit"
+          diff -r results/h200-states-20261002/report "$RUNNER_TEMP/results-audit"
+      - run: python -m build
+      - run: python -m twine check --strict dist/*
       - run: pip install --force-reinstall --no-deps dist/*.whl
       - run: |
           cd "$RUNNER_TEMP"

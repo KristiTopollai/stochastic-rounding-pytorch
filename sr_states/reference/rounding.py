@@ -1,10 +1,11 @@
 """Readable FP32-to-BF16 stochastic rounding in ordinary PyTorch operations.
 
 The implementation uses the structure of IEEE-754 binary32 and bfloat16. For
-finite inputs, the low 16 bits of the FP32 representation encode exactly the
+inputs with finite BF16 neighbors, the low 16 bits of the FP32 representation encode the
 position between the two adjacent BF16 values within a bin. Adding a uniform
-16-bit integer and clearing the low bits therefore selects the two neighbors
-with the probabilities required for unbiased stochastic rounding.
+16-bit integer and clearing the low bits selects the two neighbors with the
+probabilities required for unbiased stochastic rounding. This implementation
+obtains those bits from a reproducible counter hash.
 """
 
 from __future__ import annotations
@@ -76,7 +77,7 @@ def stochastic_round_bf16(
     Exceptional values are handled deliberately: infinities retain their sign,
     NaNs remain NaNs (their low payload bits may be discarded), and signed zero
     is preserved. Exact BF16 values are unchanged because their discarded bits
-    are zero.
+    are zero. Values beyond the finite BF16 range can round to infinity.
     """
 
     _require_fp32(x)

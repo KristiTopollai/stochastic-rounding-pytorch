@@ -1,18 +1,15 @@
 # SR-States
 
-Stochastic rounding for BF16 optimizer-state storage. SGDM keeps its momentum
-buffer in BF16; AdamW keeps its first and second moments in BF16. Updates use
-FP32 arithmetic, and the moments are rounded only when saved for the next step.
-Parameter and gradient storage are unchanged. These state tensors use half the
-memory of FP32 states.
-
-The library includes eager PyTorch references, `torch.compile` references, and
-fused Triton updates, plus standalone SR and nearest-even (NR) casts.
+Stochastic rounding for BF16 optimizer-state storage. SGDM stores its momentum
+buffer in BF16; AdamW stores its first and second moments in BF16. Updates use
+FP32 arithmetic and round the states only when saving them for the next step.
+These buffers use half the memory of FP32 states. Parameter and gradient storage
+are unchanged.
 
 ## Install
 
 Python 3.10+ and PyTorch 2.5+. Triton requires Linux, an NVIDIA GPU, and
-CUDA-enabled PyTorch.
+CUDA-enabled PyTorch. From a clone of this repository:
 
 ```bash
 pip install -e '.[triton]'
@@ -32,20 +29,21 @@ optimizer.step()
 ```
 
 Both optimizers default to stochastic BF16 states. `rounding="nearest"` selects
-BF16 NR; `state_dtype=torch.float32` selects full-precision states. Parameter
-updates use the FP32 moment intermediates before state rounding. Checkpoints
+nearest-even (NR) rounding; `state_dtype=torch.float32` selects FP32 states.
+Parameter updates use the FP32 moment intermediates before rounding. Checkpoints
 preserve state precision, step counts, and RNG position.
 
-Triton accepts contiguous CUDA FP32/BF16 parameters and dense gradients. SGDM
-implements classical momentum without weight decay, dampening, or Nesterov.
-AdamW supports bias correction, epsilon, and decoupled weight decay; AMSGrad is
-not implemented. Each parameter tensor uses one fused kernel launch.
+Triton accepts contiguous CUDA FP32/BF16 parameters and dense gradients, with one
+fused kernel per parameter tensor. SGDM implements classical momentum; AdamW
+includes bias correction and decoupled weight decay. Nesterov, dampening, SGDM
+weight decay, sparse gradients, and AMSGrad are not supported.
 
-Standalone casts are available as `sr_cast_bf16(x, seed=7, offset=0)` and
-`rn_cast_bf16(x)` from `sr_states.triton`, for contiguous CUDA FP32 inputs.
-They allocate BF16 outputs. SR uses a stateless 32-bit counter hash; identical
-seed/offset pairs repeat the rounding choices. Optimizers advance the counter
-across state tensors and steps. Changing the block size preserves the sequence.
+Eager optimizers are in `sr_states.optim`; compiled SR optimizers are in
+`sr_states.compiled`. Standalone `sr_cast_bf16(x, seed=7, offset=0)` and
+`rn_cast_bf16(x)` are in `sr_states.triton` and allocate BF16 outputs from contiguous
+CUDA FP32 inputs. SR uses a reproducible 32-bit counter hash, independent of block
+size. Optimizers advance counters across states and steps; counters wrap modulo
+2³². Values beyond the finite BF16 range can round to infinity.
 
 ## Tests and benchmarks
 
@@ -58,37 +56,31 @@ python -m benchmarks.bench_adamw --output results/raw/adamw.csv
 python -m benchmarks.bench_sr_cast --output results/raw/cast.csv
 ```
 
-GPU tests cover multi-step state updates, state-only rounding, checkpoint
-restoration, block sizes, and compiled references; they skip without CUDA/Triton.
-`bash scripts/run_state_validation.sh` runs the suite and three repeats of all
-optimizer benchmarks, saving samples, logs, and environment details.
+`bash scripts/run_state_validation.sh` runs the tests and three repeats of the
+optimizer benchmarks, saving samples and environment details. The H200 run
+passed **299 tests**; two tests requiring a second GPU were skipped.
 
-`bench_optimizer_steps` times full AdamW/SGDM `optimizer.step()` calls on diagonal
-quadratics and synthetic MLP regression. It compares native NR, Triton NR, eager
-SR, compiled SR, and Triton SR, all with FP32 parameters/gradients and BF16 states.
-Native NR uses the eager FP32 reference with PyTorch's BF16 cast. Compiled SR
-compiles each tensor's complete update; optimizer bookkeeping remains in Python.
-Quadratic `--sizes` counts total parameters, split across `--tensors` (default 1
-and 32). MLP defaults: width 512, four hidden layers, batch size 64.
+`bench_optimizer_steps` times full `optimizer.step()` calls on diagonal quadratics
+and MLP regression, with FP32 parameters/gradients and BF16 states. Native NR is
+the eager FP32 reference using PyTorch's BF16 cast. Compiled SR compiles each
+tensor update; bookkeeping remains in Python. Gradients, initialization, and
+compilation are excluded; steps and RNG counters advance normally.
 
-Gradients, initialization, and compilation are outside timing; steps and RNG
-counters advance throughout each run. CSVs contain synchronized step latency
-(including event-wait overhead), CUDA-event and CPU-submission samples, and
-speedups against both NR baselines. CUDA-event times include host submission
-gaps. CUDA graphs are disabled. [Recorded H200 optimizer results](results/h200-states-20261002/README.md)
-include all samples, validation logs, and paired comparisons.
+CSVs contain synchronized wall, CUDA-event, and CPU-submission latency, plus
+speedups against both NR baselines. Wall latency includes the event wait;
+CUDA-event latency includes host submission gaps. CUDA graphs are disabled.
+Quadratic `--sizes` counts total parameters split across `--tensors` (default 1
+and 32). In the fixed-input `bench_sgdm`/`bench_adamw` microbenchmarks, `--sizes`
+is elements per tensor; inputs, counters, and step numbers reset outside timing.
 
-`bench_sgdm` and `bench_adamw` are fixed-input update microbenchmarks covering
-eager/compiled/Triton with BF16 SR, BF16 NR, and FP32 states. Inputs, counters,
-and step numbers reset outside each sample; here `--sizes` is elements per tensor.
+## H200 results
 
-## Optimizer step results
+PyTorch 2.11.0+cu128, Triton 3.6.0. Times are medians of three process medians
+(100 samples each); speedups and overheads are medians of within-repeat ratios.
 
-H200, one FP32 tensor with 16,777,216 parameters and BF16 optimizer states.
-Times are synchronized `optimizer.step()` wall latency in microseconds, excluding
-gradient computation: median of three process medians, 100 samples each.
+Full optimizer steps, one tensor with 16,777,216 FP32 parameters and BF16 states:
 
-| Method | AdamW (µs) | SGDM (µs) |
+| Method | AdamW (µs, wall) | SGDM (µs, wall) |
 | --- | ---: | ---: |
 | Native NR reference | 627.87 | 289.72 |
 | Matched Triton NR | 145.51 | 122.31 |
@@ -96,26 +88,23 @@ gradient computation: median of three process medians, 100 samples each.
 | Compiled SR | 381.07 | 147.20 |
 | Triton SR | 145.90 | 122.94 |
 
-Paired speedups over compiled SR are **2.61× for AdamW** and **1.20× for SGDM**.
-Matched Triton NR overhead is **0.27%** and **0.25%**, respectively. These synthetic
-optimizer timings do not measure end-to-end training speed or convergence.
-[Full report and reproduction](results/h200-states-20261002/README.md).
+Triton SR is **2.61× / 1.20× faster than compiled SR** for AdamW / SGDM, with
+**0.27% / 0.25%** measured overhead versus matched Triton NR. Across all ten
+workloads, median SR overhead versus NR ranges from −0.13% to +1.83%; these differences
+are not a precise isolated RNG cost. [Full results and reproduction](results/h200-states-20261002/README.md).
+These are synthetic optimizer timings, not training-throughput or convergence results.
 
-## Standalone cast results
+Standalone casts, 16,777,216 elements, allocating output on each call:
 
-H200, 16,777,216 elements, simple Triton cast (block 256, four warps).
-PyTorch 2.11.0+cu128, Triton 3.6.0. [Recorded samples](results/h200-simple-cast.json).
-
-| Method | Time (µs) |
+| Method | Time (µs, CUDA events) |
 | --- | ---: |
+| Native PyTorch NR | 32.22 |
+| Matched Triton NR | 61.97 |
 | Eager PyTorch SR | 2,236.56 |
 | Compiled PyTorch SR | 120.94 |
 | Triton SR | 62.42 |
-| Matched Triton NR | 61.97 |
-| Native PyTorch NR | 32.22 |
 
-SR is **35.87× faster than eager SR**, **1.94× faster than compiled SR**, and has
-**0.70% overhead over matched Triton NR** in this cast benchmark. Each call
-allocates output and includes RNG for SR. Times are medians of three process
-medians (100 samples each); ratios use paired processes. These are cast timings,
-not optimizer timings.
+The simple Triton SR cast is **35.87× faster than eager SR**, **1.94× faster than
+compiled SR**, with **0.70%** measured overhead versus matched Triton NR.
+[Recorded cast samples](results/h200-simple-cast.json). Both Triton casts use
+block size 256 and four warps.
