@@ -37,4 +37,7 @@ for repeat in 0 1 2; do
       --order-seed "$repeat" --output "$result_dir/$optimizer-multi-r$repeat.csv" \
       2>&1 | tee "$result_dir/$optimizer-multi-r$repeat.log"
   done
+  python -m benchmarks.bench_optimizer_steps --sizes 1048576 16777216 --tensors 1 32 \
+    --order-seed "$repeat" --output "$result_dir/optimizer-steps-r$repeat.csv" \
+    2>&1 | tee "$result_dir/optimizer-steps-r$repeat.log"
 done

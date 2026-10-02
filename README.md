@@ -52,6 +52,7 @@ across state tensors and steps. Changing the block size preserves the sequence.
 ```bash
 pip install -e '.[dev]'
 python -m pytest
+python -m benchmarks.bench_optimizer_steps --output results/raw/optimizer-steps.csv
 python -m benchmarks.bench_sgdm --output results/raw/sgdm.csv
 python -m benchmarks.bench_adamw --output results/raw/adamw.csv
 python -m benchmarks.bench_sr_cast --output results/raw/cast.csv
@@ -59,16 +60,26 @@ python -m benchmarks.bench_sr_cast --output results/raw/cast.csv
 
 GPU tests cover multi-step state updates, state-only rounding, checkpoint
 restoration, block sizes, and compiled references; they skip without CUDA/Triton.
-`bash scripts/run_state_validation.sh` runs the suite and three benchmark repeats
-for single tensors and groups of 32 tensors, saving logs and environment details.
+`bash scripts/run_state_validation.sh` runs the suite and three repeats of all
+optimizer benchmarks, saving samples, logs, and environment details.
 
-Optimizer benchmarks compare eager, compiled, and Triton updates with BF16 SR,
-BF16 NR, and FP32 states. Every method updates preallocated buffers in place;
-compiled paths include state write-back. Inputs, RNG offsets, and AdamW's step
-are reset outside timing for each sample. `--tensors` selects the tensor count;
-`--sizes` gives elements per tensor. These are fixed-input update microbenchmarks.
-Compilation is excluded, CUDA graphs are disabled, and raw CUDA-event samples
-include host submission gaps. Optimizer GPU results are pending.
+`bench_optimizer_steps` times full AdamW/SGDM `optimizer.step()` calls on diagonal
+quadratics and synthetic MLP regression. It compares native NR, Triton NR, eager
+SR, compiled SR, and Triton SR, all with FP32 parameters/gradients and BF16 states.
+Native NR uses the eager FP32 reference with PyTorch's BF16 cast. Compiled SR
+compiles each tensor's complete update; optimizer bookkeeping remains in Python.
+Quadratic `--sizes` counts total parameters, split across `--tensors` (default 1
+and 32). MLP defaults: width 512, four hidden layers, batch size 64.
+
+Gradients, initialization, and compilation are outside timing; steps and RNG
+counters advance throughout each run. CSVs contain synchronized step latency
+(including event-wait overhead), CUDA-event and CPU-submission samples, and
+speedups against both NR baselines. CUDA-event times include host submission
+gaps. CUDA graphs are disabled. Optimizer GPU results are pending.
+
+`bench_sgdm` and `bench_adamw` are fixed-input update microbenchmarks covering
+eager/compiled/Triton with BF16 SR, BF16 NR, and FP32 states. Inputs, counters,
+and step numbers reset outside each sample; here `--sizes` is elements per tensor.
 
 ## Standalone cast results
 

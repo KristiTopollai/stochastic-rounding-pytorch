@@ -6,7 +6,7 @@ from collections.abc import Iterable
 
 import torch
 
-from sr_states.reference.adamw import adamw_step
+from sr_states.reference.adamw import adamw_step_
 
 from ._state import StateOptimizer
 
@@ -15,6 +15,7 @@ class AdamWReferenceSR(StateOptimizer):
     """AdamW with FP32 arithmetic and FP32/BF16 moment-state storage."""
 
     _state_names = ("exp_avg", "exp_avg_sq")
+    _update = staticmethod(adamw_step_.__wrapped__)
 
     def __init__(
         self,
@@ -78,7 +79,7 @@ class AdamWReferenceSR(StateOptimizer):
                         parameter, dtype=group["state_dtype"], memory_format=torch.preserve_format
                     )
                 state["step"] += 1
-                updated_p, updated_m, updated_v = adamw_step(
+                self._update(
                     parameter,
                     parameter.grad,
                     state["exp_avg"],
@@ -94,9 +95,6 @@ class AdamWReferenceSR(StateOptimizer):
                     seed=group["sr_seed"],
                     offset=offset,
                 )
-                parameter.copy_(updated_p)
-                state["exp_avg"].copy_(updated_m)
-                state["exp_avg_sq"].copy_(updated_v)
                 offset += 2 * parameter.numel()
                 group["sr_offset"] = offset
         return loss

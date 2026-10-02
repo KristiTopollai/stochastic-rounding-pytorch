@@ -33,4 +33,4 @@ jobs:
       - run: pip install --force-reinstall --no-deps dist/*.whl
       - run: |
           cd "$RUNNER_TEMP"
-          python -c "from sr_states.triton import AdamWTriton, SGDMTriton; import benchmarks.bench_states"
+          python -c "from sr_states.triton import AdamWTriton, SGDMTriton; from sr_states.compiled import AdamWCompiledSR, SGDMCompiledSR; import benchmarks.bench_states, benchmarks.bench_optimizer_steps"

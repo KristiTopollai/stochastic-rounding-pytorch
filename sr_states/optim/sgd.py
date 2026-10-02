@@ -6,7 +6,7 @@ from collections.abc import Iterable
 
 import torch
 
-from sr_states.reference.sgd import sgdm_step
+from sr_states.reference.sgd import sgdm_step_
 
 from ._state import StateOptimizer
 
@@ -20,6 +20,7 @@ class SGDMReferenceSR(StateOptimizer):
     """
 
     _state_names = ("momentum_buffer",)
+    _update = staticmethod(sgdm_step_.__wrapped__)
 
     def __init__(
         self,
@@ -68,7 +69,7 @@ class SGDMReferenceSR(StateOptimizer):
                     state["momentum_buffer"] = torch.zeros_like(
                         parameter, dtype=group["state_dtype"], memory_format=torch.preserve_format
                     )
-                updated_p, updated_u = sgdm_step(
+                self._update(
                     parameter,
                     parameter.grad,
                     state["momentum_buffer"],
@@ -79,8 +80,6 @@ class SGDMReferenceSR(StateOptimizer):
                     seed=group["sr_seed"],
                     offset=offset,
                 )
-                parameter.copy_(updated_p)
-                state["momentum_buffer"].copy_(updated_u)
                 offset += parameter.numel()
                 group["sr_offset"] = offset
         return loss
