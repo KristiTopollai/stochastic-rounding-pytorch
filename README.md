@@ -1,4 +1,4 @@
-# SR-States
+# Stochastic Rounding for PyTorch
 
 FP32-to-BF16 stochastic rounding, with standalone casts and BF16 optimizer-state
 storage in PyTorch and Triton.
