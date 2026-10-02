@@ -1,10 +1,7 @@
 # SR-States
 
-Stochastic rounding for BF16 optimizer-state storage. SGDM stores its momentum
-buffer in BF16; AdamW stores its first and second moments in BF16. Updates use
-FP32 arithmetic and round the states only when saving them for the next step.
-These buffers use half the memory of FP32 states. Parameter and gradient storage
-are unchanged.
+FP32-to-BF16 stochastic rounding, with standalone casts and BF16 optimizer-state
+storage in PyTorch and Triton.
 
 ## Install
 
@@ -16,6 +13,33 @@ pip install -e '.[triton]'
 ```
 
 ## Usage
+
+### Casting
+
+```python
+import torch
+from sr_states.triton import sr_cast_bf16, rn_cast_bf16
+
+x = torch.randn(1024, device="cuda", dtype=torch.float32)
+y_sr = sr_cast_bf16(x, seed=7, offset=0)
+y_nr = rn_cast_bf16(x)  # Nearest-even rounding
+```
+
+Both casts accept contiguous CUDA FP32 inputs and return new BF16 tensors with
+the same shape and device, leaving the input unchanged. SR uses a reproducible
+32-bit counter hash: reusing a seed and offset repeats the rounding choices.
+For successive casts, advance `offset` by the previous input's `numel()`.
+The sequence is independent of block size; counters wrap modulo 2³².
+Values beyond the finite BF16 range can round to infinity.
+
+The eager CPU/CUDA equivalent is `sr_states.reference.stochastic_round_bf16(x,
+seed=7, offset=0)`. `sr_states.compiled.compile_sr_cast()` returns its compiled version.
+
+### Optimizer states
+
+SGDM stores its momentum buffer in BF16; AdamW stores its first and second moments
+in BF16. These buffers use half the memory of FP32 states. Parameter and gradient
+storage are unchanged.
 
 ```python
 import torch
@@ -31,7 +55,8 @@ optimizer.step()
 Both optimizers default to stochastic BF16 states. `rounding="nearest"` selects
 nearest-even (NR) rounding; `state_dtype=torch.float32` selects FP32 states.
 Parameter updates use the FP32 moment intermediates before rounding. Checkpoints
-preserve state precision, step counts, and RNG position.
+preserve state precision, step counts, and RNG position. Optimizers advance the
+rounding counters automatically across states and steps.
 
 Triton accepts contiguous CUDA FP32/BF16 parameters and dense gradients, with one
 fused kernel per parameter tensor. SGDM implements classical momentum; AdamW
@@ -39,11 +64,7 @@ includes bias correction and decoupled weight decay. Nesterov, dampening, SGDM
 weight decay, sparse gradients, and AMSGrad are not supported.
 
 Eager optimizers are in `sr_states.optim`; compiled SR optimizers are in
-`sr_states.compiled`. Standalone `sr_cast_bf16(x, seed=7, offset=0)` and
-`rn_cast_bf16(x)` are in `sr_states.triton` and allocate BF16 outputs from contiguous
-CUDA FP32 inputs. SR uses a reproducible 32-bit counter hash, independent of block
-size. Optimizers advance counters across states and steps; counters wrap modulo
-2³². Values beyond the finite BF16 range can round to infinity.
+`sr_states.compiled`.
 
 ## Tests and benchmarks
 
