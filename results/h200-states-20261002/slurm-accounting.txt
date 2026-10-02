@@ -1,0 +1,4 @@
+JobID|JobName|State|Start|End|Elapsed|ExitCode|NodeList|AllocTRES
+18994353|sr-main-timing|COMPLETED|2026-10-01T21:29:16|2026-10-01T21:43:33|00:14:17|0:0|gh105|billing=4,cpu=4,gres/gpu=1,mem=32G,node=1
+18994353.batch|batch|COMPLETED|2026-10-01T21:29:16|2026-10-01T21:43:33|00:14:17|0:0|gh105|cpu=4,gres/gpu=1,mem=32G,node=1
+18994353.extern|extern|COMPLETED|2026-10-01T21:29:16|2026-10-01T21:43:33|00:14:17|0:0|gh105|billing=4,cpu=4,gres/gpu=1,mem=32G,node=1

@@ -1,0 +1,15 @@
+{
+  "job_id": "18994353",
+  "source_commit": "ef5c8b4be05834ed50e15e3831d1c56c4b818803",
+  "archived_files": 43,
+  "csv_files": 15,
+  "timing_rows": 420,
+  "timed_updates": 42000,
+  "recorded_latency_values": 72000,
+  "summary_rows": 240,
+  "comparison_rows": 160,
+  "tests_passed": 299,
+  "tests_skipped": 2,
+  "cpu_tests_passed": 117,
+  "timed_compiled_graphs": 0
+}

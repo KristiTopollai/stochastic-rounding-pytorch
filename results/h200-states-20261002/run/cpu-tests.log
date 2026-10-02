@@ -1,0 +1,20 @@
+........................................................................ [ 61%]
+.............................................                            [100%]
+=============================== warnings summary ===============================
+tests/test_state_optimizers.py::test_closure_and_sparse_gradient[AdamWTriton]
+  /scratch/kt2664/Stochastic-Rounding-for-Numerical-Optimization-with-State-Quantization/tests/test_state_optimizers.py:110: UserWarning: Sparse invariant checks are implicitly disabled. Memory errors (e.g. SEGFAULT) will occur when operating on a sparse tensor which violates the invariants, but checks incur performance overhead. To silence this warning, explicitly opt in or out. See `torch.sparse.check_sparse_tensor_invariants.__doc__` for guidance.  (Triggered internally at /pytorch/aten/src/ATen/Context.cpp:760.)
+    p.grad = torch.sparse_coo_tensor([[0]], [1.0], size=(4,), check_invariants=True)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 10 durations =============================
+27.38s call     tests/test_compiled.py::test_compiled_sr_matches_eager_frontend
+2.93s call     tests/test_optimizer_steps_benchmark.py::test_full_optimizer_path_advances_and_restarts[compiled_sr-adamw]
+1.54s call     tests/test_optimizer_steps_benchmark.py::test_compiled_optimizer_multistep_checkpoint_and_skipped_gradient[adamw]
+1.19s call     tests/test_optimizer_steps_benchmark.py::test_full_optimizer_path_advances_and_restarts[compiled_sr-sgdm]
+1.04s call     tests/test_optimizer_steps_benchmark.py::test_compiled_optimizer_multistep_checkpoint_and_skipped_gradient[sgdm]
+0.54s call     tests/test_state_benchmark.py::test_benchmark_updates_in_place_and_resets[compiled-bf16_nr-sgdm]
+0.51s call     tests/test_state_benchmark.py::test_benchmark_updates_in_place_and_resets[compiled-bf16_sr-adamw]
+0.44s call     tests/test_state_benchmark.py::test_compiled_inplace_update_accepts_leaf_parameters[adamw]
+0.41s call     tests/test_state_benchmark.py::test_benchmark_updates_in_place_and_resets[compiled-bf16_sr-sgdm]
+0.32s call     tests/test_state_benchmark.py::test_compiled_inplace_update_accepts_leaf_parameters[sgdm]
+117 passed, 184 deselected, 1 warning in 57.80s

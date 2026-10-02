@@ -1,0 +1,59 @@
+{
+  "job_id": "18994353",
+  "submitted_utc": "2026-10-02T01:20:16.750743+00:00",
+  "commit": "ef5c8b4be05834ed50e15e3831d1c56c4b818803",
+  "branch": "main",
+  "command": [
+    "sbatch",
+    "--parsable",
+    "--output=results/raw/main-state-timing-20261002T011750Z/slurm-%j.out",
+    "results/raw/main-state-timing-20261002T011750Z/benchmark.sbatch"
+  ],
+  "benchmark_command": [
+    "bash",
+    "scripts/run_state_validation.sh",
+    "/scratch/kt2664/Stochastic-Rounding-for-Numerical-Optimization-with-State-Quantization/results/raw/main-state-timing-20261002T011750Z/benchmark"
+  ],
+  "resources": {
+    "partition": "h200_tandon",
+    "account": "torch_pr_103_tandon_advanced",
+    "gpus": 1,
+    "cpus": 4,
+    "memory": "32G",
+    "time_limit": "02:00:00"
+  },
+  "preflight": {
+    "cpu_passed": 117,
+    "cuda_deselected": 184,
+    "lint": "passed",
+    "format": "passed",
+    "shell_syntax": "passed"
+  },
+  "expected_gpu_test_skips": [
+    "tests/test_triton_states.py::test_state_update_uses_tensor_device[sgdm]",
+    "tests/test_triton_states.py::test_state_update_uses_tensor_device[adamw]"
+  ],
+  "expected_csv_rows": {
+    "sgdm-single-r0.csv": 27,
+    "sgdm-multi-r0.csv": 18,
+    "adamw-single-r0.csv": 27,
+    "adamw-multi-r0.csv": 18,
+    "sgdm-single-r1.csv": 27,
+    "sgdm-multi-r1.csv": 18,
+    "adamw-single-r1.csv": 27,
+    "adamw-multi-r1.csv": 18,
+    "sgdm-single-r2.csv": 27,
+    "sgdm-multi-r2.csv": 18,
+    "adamw-single-r2.csv": 27,
+    "adamw-multi-r2.csv": 18,
+    "optimizer-steps-r0.csv": 50,
+    "optimizer-steps-r1.csv": 50,
+    "optimizer-steps-r2.csv": 50
+  },
+  "warmup": 20,
+  "samples_per_method": 100,
+  "process_repeats": 3,
+  "rerun_of_job": "18993594",
+  "source_patch": "source.patch",
+  "change": "Reset Dynamo caches before and after each optimizer-step benchmark test."
+}

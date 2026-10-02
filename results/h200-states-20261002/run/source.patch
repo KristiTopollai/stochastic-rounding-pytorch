@@ -1,0 +1,46 @@
+diff --git a/tests/test_optimizer_steps_benchmark.py b/tests/test_optimizer_steps_benchmark.py
+index 273a11c..3465fc7 100644
+--- a/tests/test_optimizer_steps_benchmark.py
++++ b/tests/test_optimizer_steps_benchmark.py
+@@ -10,6 +10,15 @@ from sr_states import AdamWReferenceSR, SGDMReferenceSR
+ from sr_states.triton import is_triton_available
+ 
+ 
++@pytest.fixture(autouse=True)
++def isolated_compile_cache():
++    # Independent workloads must not consume later tests' per-function graph
++    # budget. Keep the cache intact within each test to check warm replay.
++    torch._dynamo.reset()
++    yield
++    torch._dynamo.reset()
++
++
+ def problem(name, device="cpu"):
+     if name == "quadratic":
+         return bench.Quadratic(37, 3, device=device, seed=7)
+@@ -51,8 +60,6 @@ def test_synthetic_problems_reproduce_gradients_and_reset(name):
+ @pytest.mark.parametrize("kind", ["adamw", "sgdm"])
+ @pytest.mark.parametrize("method", ["native_nr", "eager_sr", "compiled_sr"])
+ def test_full_optimizer_path_advances_and_restarts(kind, method):
+-    if method == "compiled_sr":
+-        torch._dynamo.reset()
+     case = bench.build_case(problem("mlp"), kind, method, compile_backend="eager")
+     assert case.optimizer.param_groups[0]["rounding"] == (
+         "nearest" if method == "native_nr" else "stochastic"
+@@ -85,7 +92,6 @@ def test_full_optimizer_path_advances_and_restarts(kind, method):
+ 
+ @pytest.mark.parametrize("kind", ["adamw", "sgdm"])
+ def test_compiled_optimizer_multistep_checkpoint_and_skipped_gradient(kind):
+-    torch._dynamo.reset()
+     case = bench.build_case(problem("quadratic"), kind, "compiled_sr", compile_backend="eager")
+     reference_class = AdamWReferenceSR if kind == "adamw" else SGDMReferenceSR
+     parameters = [torch.nn.Parameter(p.detach().clone()) for p in case.problem.parameters]
+@@ -216,8 +222,6 @@ def test_quadratic_sizes_are_total_elements_and_cannot_be_smaller_than_tensor_co
+ @pytest.mark.parametrize("method", bench.METHODS)
+ @pytest.mark.parametrize("name", ["quadratic", "mlp"])
+ def test_gpu_synthetic_full_steps(kind, method, name):
+-    if method == "compiled_sr":
+-        torch._dynamo.reset()
+     case = bench.build_case(problem(name, "cuda"), kind, method)
+     bench.validate_case(case)
+     samples = bench.measure_steps(case, warmup=2, repetitions=3)

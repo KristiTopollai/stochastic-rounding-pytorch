@@ -1,0 +1,640 @@
+{
+  "state": "running",
+  "started_utc": "2026-10-02T01:29:31.636180+00:00",
+  "job_id": "18994353",
+  "commit": "ef5c8b4be05834ed50e15e3831d1c56c4b818803",
+  "gpu": "NVIDIA H200",
+  "device_count": 1,
+  "command": [
+    "bash",
+    "scripts/run_state_validation.sh",
+    "/scratch/kt2664/Stochastic-Rounding-for-Numerical-Optimization-with-State-Quantization/results/raw/main-state-timing-20261002T011750Z/benchmark"
+  ]
+}
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.6.0
+rootdir: /scratch/kt2664/Stochastic-Rounding-for-Numerical-Optimization-with-State-Quantization
+configfile: pyproject.toml
+testpaths: tests
+collected 301 items
+
+tests/test_benchmark_helpers.py ........                                 [  2%]
+tests/test_cast_benchmark.py .....                                       [  4%]
+tests/test_compiled.py ..                                                [  4%]
+tests/test_cuda_cast.py .                                                [  5%]
+tests/test_optimizer_steps_benchmark.py ................................ [ 15%]
+........                                                                 [ 18%]
+tests/test_reference_optimizers.py .....                                 [ 20%]
+tests/test_seed_reproducibility.py ....                                  [ 21%]
+tests/test_sr_edge_cases.py ......                                       [ 23%]
+tests/test_sr_statistics.py ..                                           [ 24%]
+tests/test_state_benchmark.py .......................                    [ 31%]
+tests/test_state_optimizers.py ................................          [ 42%]
+tests/test_triton_api.py ..........                                      [ 45%]
+tests/test_triton_casts.py ............................................. [ 60%]
+.................................                                        [ 71%]
+tests/test_triton_sgdm.py .........                                      [ 74%]
+tests/test_triton_sr_cast.py ......                                      [ 76%]
+tests/test_triton_states.py ............................................ [ 91%]
+........................ss                                               [100%]
+
+=============================== warnings summary ===============================
+tests/test_cuda_cast.py: 14 warnings
+  /scratch/kt2664/venvs/tilde/lib/python3.13/site-packages/torch/jit/_script.py:365: DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`.
+    warnings.warn(
+
+tests/test_state_optimizers.py::test_closure_and_sparse_gradient[AdamWTriton]
+  /scratch/kt2664/Stochastic-Rounding-for-Numerical-Optimization-with-State-Quantization/tests/test_state_optimizers.py:110: UserWarning: Sparse invariant checks are implicitly disabled. Memory errors (e.g. SEGFAULT) will occur when operating on a sparse tensor which violates the invariants, but checks incur performance overhead. To silence this warning, explicitly opt in or out. See `torch.sparse.check_sparse_tensor_invariants.__doc__` for guidance.  (Triggered internally at /pytorch/aten/src/ATen/Context.cpp:760.)
+    p.grad = torch.sparse_coo_tensor([[0]], [1.0], size=(4,), check_invariants=True)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+- generated xml file: /scratch/kt2664/Stochastic-Rounding-for-Numerical-Optimization-with-State-Quantization/results/raw/main-state-timing-20261002T011750Z/gpu-tests.xml -
+============================= slowest 15 durations =============================
+23.96s call     tests/test_cuda_cast.py::test_cuda_compiled_cast_matches_reference
+10.52s call     tests/test_compiled.py::test_compiled_sr_matches_eager_frontend
+8.09s call     tests/test_optimizer_steps_benchmark.py::test_gpu_synthetic_full_steps[mlp-compiled_sr-adamw]
+6.08s call     tests/test_triton_states.py::test_inductor_complete_updates[adamw]
+5.09s call     tests/test_optimizer_steps_benchmark.py::test_gpu_synthetic_full_steps[mlp-compiled_sr-sgdm]
+4.48s call     tests/test_triton_states.py::test_inductor_complete_updates[sgdm]
+3.79s call     tests/test_optimizer_steps_benchmark.py::test_gpu_synthetic_full_steps[quadratic-compiled_sr-adamw]
+3.36s call     tests/test_triton_casts.py::test_launch_and_store_variants_preserve_cast_contract[convert-1-4096]
+2.96s call     tests/test_triton_casts.py::test_launch_and_store_variants_preserve_cast_contract[bits-1-4096]
+2.50s call     tests/test_triton_casts.py::test_launch_and_store_variants_preserve_cast_contract[convert-1-128]
+2.32s call     tests/test_optimizer_steps_benchmark.py::test_gpu_synthetic_full_steps[quadratic-compiled_sr-sgdm]
+2.21s call     tests/test_triton_casts.py::test_nearest_cast_matches_native_and_cpu[1-128]
+2.12s call     tests/test_triton_casts.py::test_launch_and_store_variants_preserve_cast_contract[bits-2-4096]
+1.97s call     tests/test_triton_casts.py::test_launch_and_store_variants_preserve_cast_contract[convert-2-4096]
+1.77s call     tests/test_triton_casts.py::test_launch_and_store_variants_preserve_cast_contract[convert-1-2048]
+=========================== short test summary info ============================
+SKIPPED [2] tests/test_triton_states.py:201: requires two CUDA devices
+=========== 299 passed, 2 skipped, 15 warnings in 190.27s (0:03:10) ============
+sgdm: 1 x 1024 triton_bf16_nr
+sgdm: 1 x 1024 compiled_fp32
+sgdm: 1 x 1024 eager_bf16_nr
+sgdm: 1 x 1024 compiled_bf16_sr
+sgdm: 1 x 1024 compiled_bf16_nr
+sgdm: 1 x 1024 eager_fp32
+sgdm: 1 x 1024 eager_bf16_sr
+sgdm: 1 x 1024 triton_fp32
+sgdm: 1 x 1024 triton_bf16_sr
+sgdm: 1 x 1048576 eager_fp32
+sgdm: 1 x 1048576 eager_bf16_sr
+sgdm: 1 x 1048576 compiled_bf16_sr
+sgdm: 1 x 1048576 triton_fp32
+sgdm: 1 x 1048576 triton_bf16_sr
+sgdm: 1 x 1048576 eager_bf16_nr
+sgdm: 1 x 1048576 compiled_bf16_nr
+sgdm: 1 x 1048576 compiled_fp32
+sgdm: 1 x 1048576 triton_bf16_nr
+sgdm: 1 x 16777216 eager_fp32
+sgdm: 1 x 16777216 eager_bf16_sr
+sgdm: 1 x 16777216 compiled_bf16_sr
+sgdm: 1 x 16777216 triton_fp32
+sgdm: 1 x 16777216 triton_bf16_sr
+sgdm: 1 x 16777216 compiled_fp32
+sgdm: 1 x 16777216 triton_bf16_nr
+sgdm: 1 x 16777216 compiled_bf16_nr
+sgdm: 1 x 16777216 eager_bf16_nr
+sgdm: 32 x 4096 triton_bf16_nr
+sgdm: 32 x 4096 compiled_fp32
+sgdm: 32 x 4096 eager_bf16_nr
+sgdm: 32 x 4096 compiled_bf16_sr
+sgdm: 32 x 4096 compiled_bf16_nr
+sgdm: 32 x 4096 eager_fp32
+sgdm: 32 x 4096 eager_bf16_sr
+sgdm: 32 x 4096 triton_fp32
+sgdm: 32 x 4096 triton_bf16_sr
+sgdm: 32 x 65536 eager_fp32
+sgdm: 32 x 65536 eager_bf16_sr
+sgdm: 32 x 65536 compiled_bf16_sr
+sgdm: 32 x 65536 triton_fp32
+sgdm: 32 x 65536 triton_bf16_sr
+sgdm: 32 x 65536 eager_bf16_nr
+sgdm: 32 x 65536 compiled_bf16_nr
+sgdm: 32 x 65536 compiled_fp32
+sgdm: 32 x 65536 triton_bf16_nr
+adamw: 1 x 1024 triton_bf16_nr
+adamw: 1 x 1024 compiled_fp32
+adamw: 1 x 1024 eager_bf16_nr
+adamw: 1 x 1024 compiled_bf16_sr
+adamw: 1 x 1024 compiled_bf16_nr
+adamw: 1 x 1024 eager_fp32
+adamw: 1 x 1024 eager_bf16_sr
+adamw: 1 x 1024 triton_fp32
+adamw: 1 x 1024 triton_bf16_sr
+adamw: 1 x 1048576 eager_fp32
+adamw: 1 x 1048576 eager_bf16_sr
+adamw: 1 x 1048576 compiled_bf16_sr
+adamw: 1 x 1048576 triton_fp32
+adamw: 1 x 1048576 triton_bf16_sr
+adamw: 1 x 1048576 eager_bf16_nr
+adamw: 1 x 1048576 compiled_bf16_nr
+adamw: 1 x 1048576 compiled_fp32
+adamw: 1 x 1048576 triton_bf16_nr
+adamw: 1 x 16777216 eager_fp32
+adamw: 1 x 16777216 eager_bf16_sr
+adamw: 1 x 16777216 compiled_bf16_sr
+adamw: 1 x 16777216 triton_fp32
+adamw: 1 x 16777216 triton_bf16_sr
+adamw: 1 x 16777216 compiled_fp32
+adamw: 1 x 16777216 triton_bf16_nr
+adamw: 1 x 16777216 compiled_bf16_nr
+adamw: 1 x 16777216 eager_bf16_nr
+adamw: 32 x 4096 triton_bf16_nr
+adamw: 32 x 4096 compiled_fp32
+adamw: 32 x 4096 eager_bf16_nr
+adamw: 32 x 4096 compiled_bf16_sr
+adamw: 32 x 4096 compiled_bf16_nr
+adamw: 32 x 4096 eager_fp32
+adamw: 32 x 4096 eager_bf16_sr
+adamw: 32 x 4096 triton_fp32
+adamw: 32 x 4096 triton_bf16_sr
+adamw: 32 x 65536 eager_fp32
+adamw: 32 x 65536 eager_bf16_sr
+adamw: 32 x 65536 compiled_bf16_sr
+adamw: 32 x 65536 triton_fp32
+adamw: 32 x 65536 triton_bf16_sr
+adamw: 32 x 65536 eager_bf16_nr
+adamw: 32 x 65536 compiled_bf16_nr
+adamw: 32 x 65536 compiled_fp32
+adamw: 32 x 65536 triton_bf16_nr
+quadratic-1048576-1: adamw eager_sr
+  step 647.12 us; CUDA events 640.98 us
+quadratic-1048576-1: adamw triton_nr
+  step 84.49 us; CUDA events 78.66 us
+quadratic-1048576-1: adamw native_nr
+  step 150.24 us; CUDA events 144.26 us
+quadratic-1048576-1: adamw triton_sr
+  step 84.11 us; CUDA events 78.16 us
+quadratic-1048576-1: adamw compiled_sr
+  step 135.51 us; CUDA events 129.63 us
+quadratic-1048576-1: sgdm native_nr
+  step 85.69 us; CUDA events 79.79 us
+quadratic-1048576-1: sgdm eager_sr
+  step 343.69 us; CUDA events 337.62 us
+quadratic-1048576-1: sgdm triton_nr
+  step 78.23 us; CUDA events 72.34 us
+quadratic-1048576-1: sgdm compiled_sr
+  step 117.31 us; CUDA events 111.39 us
+quadratic-1048576-1: sgdm triton_sr
+  step 79.68 us; CUDA events 73.82 us
+quadratic-1048576-32: adamw triton_nr
+  step 1298.20 us; CUDA events 1292.43 us
+quadratic-1048576-32: adamw native_nr
+  step 3435.71 us; CUDA events 3429.82 us
+quadratic-1048576-32: adamw triton_sr
+  step 1322.29 us; CUDA events 1316.61 us
+quadratic-1048576-32: adamw eager_sr
+  step 18715.93 us; CUDA events 18709.28 us
+quadratic-1048576-32: adamw compiled_sr
+  step 2564.69 us; CUDA events 2558.82 us
+quadratic-1048576-32: sgdm eager_sr
+  step 9105.32 us; CUDA events 9099.28 us
+quadratic-1048576-32: sgdm native_nr
+  step 1584.28 us; CUDA events 1578.37 us
+quadratic-1048576-32: sgdm compiled_sr
+  step 1955.62 us; CUDA events 1949.90 us
+quadratic-1048576-32: sgdm triton_nr
+  step 1075.13 us; CUDA events 1069.26 us
+quadratic-1048576-32: sgdm triton_sr
+  step 1091.90 us; CUDA events 1086.06 us
+quadratic-16777216-1: adamw triton_nr
+  step 145.51 us; CUDA events 139.34 us
+quadratic-16777216-1: adamw triton_sr
+  step 145.90 us; CUDA events 139.71 us
+quadratic-16777216-1: adamw compiled_sr
+  step 381.50 us; CUDA events 375.25 us
+quadratic-16777216-1: adamw eager_sr
+  step 5033.19 us; CUDA events 5026.51 us
+quadratic-16777216-1: adamw native_nr
+  step 628.03 us; CUDA events 621.70 us
+quadratic-16777216-1: sgdm triton_nr
+  step 121.82 us; CUDA events 115.82 us
+quadratic-16777216-1: sgdm compiled_sr
+  step 147.20 us; CUDA events 141.10 us
+quadratic-16777216-1: sgdm triton_sr
+  step 122.94 us; CUDA events 116.69 us
+quadratic-16777216-1: sgdm native_nr
+  step 289.67 us; CUDA events 283.44 us
+quadratic-16777216-1: sgdm eager_sr
+  step 2494.53 us; CUDA events 2487.78 us
+quadratic-16777216-32: adamw triton_nr
+  step 1315.92 us; CUDA events 1310.16 us
+quadratic-16777216-32: adamw native_nr
+  step 3434.71 us; CUDA events 3428.96 us
+quadratic-16777216-32: adamw triton_sr
+  step 1311.45 us; CUDA events 1305.68 us
+quadratic-16777216-32: adamw compiled_sr
+  step 2593.57 us; CUDA events 2587.66 us
+quadratic-16777216-32: adamw eager_sr
+  step 18717.01 us; CUDA events 18710.42 us
+quadratic-16777216-32: sgdm triton_sr
+  step 1084.75 us; CUDA events 1079.46 us
+quadratic-16777216-32: sgdm native_nr
+  step 1580.65 us; CUDA events 1574.83 us
+quadratic-16777216-32: sgdm triton_nr
+  step 1082.56 us; CUDA events 1076.64 us
+quadratic-16777216-32: sgdm compiled_sr
+  step 1952.92 us; CUDA events 1946.75 us
+quadratic-16777216-32: sgdm eager_sr
+  step 9169.62 us; CUDA events 9163.26 us
+mlp-512-4-64: adamw native_nr
+  step 1225.04 us; CUDA events 1218.83 us
+mlp-512-4-64: adamw eager_sr
+  step 6209.80 us; CUDA events 6204.26 us
+mlp-512-4-64: adamw triton_nr
+  step 516.81 us; CUDA events 511.78 us
+mlp-512-4-64: adamw compiled_sr
+  step 1198.95 us; CUDA events 1192.80 us
+mlp-512-4-64: adamw triton_sr
+  step 525.21 us; CUDA events 519.79 us
+mlp-512-4-64: sgdm eager_sr
+  step 3141.02 us; CUDA events 3135.44 us
+mlp-512-4-64: sgdm triton_nr
+  step 453.51 us; CUDA events 448.48 us
+mlp-512-4-64: sgdm compiled_sr
+  step 942.90 us; CUDA events 936.86 us
+mlp-512-4-64: sgdm triton_sr
+  step 459.45 us; CUDA events 454.19 us
+mlp-512-4-64: sgdm native_nr
+  step 593.72 us; CUDA events 588.48 us
+sgdm: 1 x 1024 compiled_fp32
+sgdm: 1 x 1024 triton_bf16_sr
+sgdm: 1 x 1024 triton_bf16_nr
+sgdm: 1 x 1024 compiled_bf16_nr
+sgdm: 1 x 1024 compiled_bf16_sr
+sgdm: 1 x 1024 eager_bf16_sr
+sgdm: 1 x 1024 triton_fp32
+sgdm: 1 x 1024 eager_bf16_nr
+sgdm: 1 x 1024 eager_fp32
+sgdm: 1 x 1048576 triton_bf16_nr
+sgdm: 1 x 1048576 compiled_fp32
+sgdm: 1 x 1048576 eager_fp32
+sgdm: 1 x 1048576 compiled_bf16_nr
+sgdm: 1 x 1048576 triton_bf16_sr
+sgdm: 1 x 1048576 eager_bf16_sr
+sgdm: 1 x 1048576 triton_fp32
+sgdm: 1 x 1048576 eager_bf16_nr
+sgdm: 1 x 1048576 compiled_bf16_sr
+sgdm: 1 x 16777216 eager_fp32
+sgdm: 1 x 16777216 compiled_bf16_sr
+sgdm: 1 x 16777216 triton_bf16_sr
+sgdm: 1 x 16777216 eager_bf16_sr
+sgdm: 1 x 16777216 triton_fp32
+sgdm: 1 x 16777216 eager_bf16_nr
+sgdm: 1 x 16777216 compiled_fp32
+sgdm: 1 x 16777216 compiled_bf16_nr
+sgdm: 1 x 16777216 triton_bf16_nr
+sgdm: 32 x 4096 compiled_fp32
+sgdm: 32 x 4096 triton_bf16_sr
+sgdm: 32 x 4096 triton_bf16_nr
+sgdm: 32 x 4096 compiled_bf16_nr
+sgdm: 32 x 4096 compiled_bf16_sr
+sgdm: 32 x 4096 eager_bf16_sr
+sgdm: 32 x 4096 triton_fp32
+sgdm: 32 x 4096 eager_bf16_nr
+sgdm: 32 x 4096 eager_fp32
+sgdm: 32 x 65536 triton_bf16_nr
+sgdm: 32 x 65536 compiled_fp32
+sgdm: 32 x 65536 eager_fp32
+sgdm: 32 x 65536 compiled_bf16_nr
+sgdm: 32 x 65536 triton_bf16_sr
+sgdm: 32 x 65536 eager_bf16_sr
+sgdm: 32 x 65536 triton_fp32
+sgdm: 32 x 65536 eager_bf16_nr
+sgdm: 32 x 65536 compiled_bf16_sr
+adamw: 1 x 1024 compiled_fp32
+adamw: 1 x 1024 triton_bf16_sr
+adamw: 1 x 1024 triton_bf16_nr
+adamw: 1 x 1024 compiled_bf16_nr
+adamw: 1 x 1024 compiled_bf16_sr
+adamw: 1 x 1024 eager_bf16_sr
+adamw: 1 x 1024 triton_fp32
+adamw: 1 x 1024 eager_bf16_nr
+adamw: 1 x 1024 eager_fp32
+adamw: 1 x 1048576 triton_bf16_nr
+adamw: 1 x 1048576 compiled_fp32
+adamw: 1 x 1048576 eager_fp32
+adamw: 1 x 1048576 compiled_bf16_nr
+adamw: 1 x 1048576 triton_bf16_sr
+adamw: 1 x 1048576 eager_bf16_sr
+adamw: 1 x 1048576 triton_fp32
+adamw: 1 x 1048576 eager_bf16_nr
+adamw: 1 x 1048576 compiled_bf16_sr
+adamw: 1 x 16777216 eager_fp32
+adamw: 1 x 16777216 compiled_bf16_sr
+adamw: 1 x 16777216 triton_bf16_sr
+adamw: 1 x 16777216 eager_bf16_sr
+adamw: 1 x 16777216 triton_fp32
+adamw: 1 x 16777216 eager_bf16_nr
+adamw: 1 x 16777216 compiled_fp32
+adamw: 1 x 16777216 compiled_bf16_nr
+adamw: 1 x 16777216 triton_bf16_nr
+adamw: 32 x 4096 compiled_fp32
+adamw: 32 x 4096 triton_bf16_sr
+adamw: 32 x 4096 triton_bf16_nr
+adamw: 32 x 4096 compiled_bf16_nr
+adamw: 32 x 4096 compiled_bf16_sr
+adamw: 32 x 4096 eager_bf16_sr
+adamw: 32 x 4096 triton_fp32
+adamw: 32 x 4096 eager_bf16_nr
+adamw: 32 x 4096 eager_fp32
+adamw: 32 x 65536 triton_bf16_nr
+adamw: 32 x 65536 compiled_fp32
+adamw: 32 x 65536 eager_fp32
+adamw: 32 x 65536 compiled_bf16_nr
+adamw: 32 x 65536 triton_bf16_sr
+adamw: 32 x 65536 eager_bf16_sr
+adamw: 32 x 65536 triton_fp32
+adamw: 32 x 65536 eager_bf16_nr
+adamw: 32 x 65536 compiled_bf16_sr
+quadratic-1048576-1: adamw eager_sr
+  step 653.61 us; CUDA events 647.15 us
+quadratic-1048576-1: adamw compiled_sr
+  step 130.95 us; CUDA events 124.85 us
+quadratic-1048576-1: adamw triton_sr
+  step 85.19 us; CUDA events 79.31 us
+quadratic-1048576-1: adamw native_nr
+  step 152.00 us; CUDA events 145.84 us
+quadratic-1048576-1: adamw triton_nr
+  step 83.93 us; CUDA events 77.97 us
+quadratic-1048576-1: sgdm native_nr
+  step 85.51 us; CUDA events 79.52 us
+quadratic-1048576-1: sgdm eager_sr
+  step 346.10 us; CUDA events 340.06 us
+quadratic-1048576-1: sgdm triton_nr
+  step 77.04 us; CUDA events 71.15 us
+quadratic-1048576-1: sgdm triton_sr
+  step 76.69 us; CUDA events 70.72 us
+quadratic-1048576-1: sgdm compiled_sr
+  step 110.89 us; CUDA events 104.99 us
+quadratic-1048576-32: adamw eager_sr
+  step 18701.92 us; CUDA events 18694.94 us
+quadratic-1048576-32: adamw compiled_sr
+  step 2501.51 us; CUDA events 2495.26 us
+quadratic-1048576-32: adamw triton_sr
+  step 1278.78 us; CUDA events 1272.70 us
+quadratic-1048576-32: adamw native_nr
+  step 3400.10 us; CUDA events 3394.02 us
+quadratic-1048576-32: adamw triton_nr
+  step 1255.74 us; CUDA events 1249.81 us
+quadratic-1048576-32: sgdm triton_nr
+  step 1045.16 us; CUDA events 1039.33 us
+quadratic-1048576-32: sgdm native_nr
+  step 1561.20 us; CUDA events 1555.33 us
+quadratic-1048576-32: sgdm eager_sr
+  step 9107.18 us; CUDA events 9101.01 us
+quadratic-1048576-32: sgdm triton_sr
+  step 1055.70 us; CUDA events 1049.70 us
+quadratic-1048576-32: sgdm compiled_sr
+  step 1900.61 us; CUDA events 1894.29 us
+quadratic-16777216-1: adamw triton_nr
+  step 144.67 us; CUDA events 138.35 us
+quadratic-16777216-1: adamw native_nr
+  step 627.63 us; CUDA events 621.01 us
+quadratic-16777216-1: adamw triton_sr
+  step 145.01 us; CUDA events 138.69 us
+quadratic-16777216-1: adamw eager_sr
+  step 5033.15 us; CUDA events 5026.16 us
+quadratic-16777216-1: adamw compiled_sr
+  step 380.44 us; CUDA events 374.13 us
+quadratic-16777216-1: sgdm eager_sr
+  step 2494.13 us; CUDA events 2487.28 us
+quadratic-16777216-1: sgdm compiled_sr
+  step 146.74 us; CUDA events 140.37 us
+quadratic-16777216-1: sgdm triton_nr
+  step 122.31 us; CUDA events 115.87 us
+quadratic-16777216-1: sgdm native_nr
+  step 289.72 us; CUDA events 283.15 us
+quadratic-16777216-1: sgdm triton_sr
+  step 122.61 us; CUDA events 116.24 us
+quadratic-16777216-32: adamw triton_nr
+  step 1274.12 us; CUDA events 1268.13 us
+quadratic-16777216-32: adamw compiled_sr
+  step 2522.26 us; CUDA events 2516.10 us
+quadratic-16777216-32: adamw eager_sr
+  step 18804.21 us; CUDA events 18797.71 us
+quadratic-16777216-32: adamw triton_sr
+  step 1277.71 us; CUDA events 1271.87 us
+quadratic-16777216-32: adamw native_nr
+  step 3419.33 us; CUDA events 3413.46 us
+quadratic-16777216-32: sgdm eager_sr
+  step 9204.28 us; CUDA events 9197.76 us
+quadratic-16777216-32: sgdm native_nr
+  step 1561.73 us; CUDA events 1555.79 us
+quadratic-16777216-32: sgdm triton_sr
+  step 1075.11 us; CUDA events 1069.06 us
+quadratic-16777216-32: sgdm triton_nr
+  step 1067.69 us; CUDA events 1061.39 us
+quadratic-16777216-32: sgdm compiled_sr
+  step 1922.74 us; CUDA events 1916.40 us
+mlp-512-4-64: adamw native_nr
+  step 1236.27 us; CUDA events 1230.64 us
+mlp-512-4-64: adamw eager_sr
+  step 6284.67 us; CUDA events 6277.14 us
+mlp-512-4-64: adamw compiled_sr
+  step 1172.39 us; CUDA events 1166.83 us
+mlp-512-4-64: adamw triton_nr
+  step 518.91 us; CUDA events 513.49 us
+mlp-512-4-64: adamw triton_sr
+  step 513.19 us; CUDA events 507.87 us
+mlp-512-4-64: sgdm eager_sr
+  step 3174.66 us; CUDA events 3168.42 us
+mlp-512-4-64: sgdm native_nr
+  step 599.14 us; CUDA events 593.86 us
+mlp-512-4-64: sgdm compiled_sr
+  step 924.60 us; CUDA events 919.23 us
+mlp-512-4-64: sgdm triton_nr
+  step 451.67 us; CUDA events 446.35 us
+mlp-512-4-64: sgdm triton_sr
+  step 455.01 us; CUDA events 449.25 us
+sgdm: 1 x 1024 compiled_bf16_sr
+sgdm: 1 x 1024 triton_bf16_sr
+sgdm: 1 x 1024 compiled_bf16_nr
+sgdm: 1 x 1024 compiled_fp32
+sgdm: 1 x 1024 triton_bf16_nr
+sgdm: 1 x 1024 eager_fp32
+sgdm: 1 x 1024 triton_fp32
+sgdm: 1 x 1024 eager_bf16_nr
+sgdm: 1 x 1024 eager_bf16_sr
+sgdm: 1 x 1048576 triton_fp32
+sgdm: 1 x 1048576 eager_bf16_nr
+sgdm: 1 x 1048576 compiled_bf16_nr
+sgdm: 1 x 1048576 triton_bf16_nr
+sgdm: 1 x 1048576 triton_bf16_sr
+sgdm: 1 x 1048576 compiled_fp32
+sgdm: 1 x 1048576 compiled_bf16_sr
+sgdm: 1 x 1048576 eager_fp32
+sgdm: 1 x 1048576 eager_bf16_sr
+sgdm: 1 x 16777216 compiled_fp32
+sgdm: 1 x 16777216 triton_bf16_nr
+sgdm: 1 x 16777216 eager_bf16_nr
+sgdm: 1 x 16777216 compiled_bf16_sr
+sgdm: 1 x 16777216 eager_fp32
+sgdm: 1 x 16777216 triton_bf16_sr
+sgdm: 1 x 16777216 eager_bf16_sr
+sgdm: 1 x 16777216 compiled_bf16_nr
+sgdm: 1 x 16777216 triton_fp32
+sgdm: 32 x 4096 compiled_bf16_sr
+sgdm: 32 x 4096 triton_bf16_sr
+sgdm: 32 x 4096 compiled_bf16_nr
+sgdm: 32 x 4096 compiled_fp32
+sgdm: 32 x 4096 triton_bf16_nr
+sgdm: 32 x 4096 eager_fp32
+sgdm: 32 x 4096 triton_fp32
+sgdm: 32 x 4096 eager_bf16_nr
+sgdm: 32 x 4096 eager_bf16_sr
+sgdm: 32 x 65536 triton_fp32
+sgdm: 32 x 65536 eager_bf16_nr
+sgdm: 32 x 65536 compiled_bf16_nr
+sgdm: 32 x 65536 triton_bf16_nr
+sgdm: 32 x 65536 triton_bf16_sr
+sgdm: 32 x 65536 compiled_fp32
+sgdm: 32 x 65536 compiled_bf16_sr
+sgdm: 32 x 65536 eager_fp32
+sgdm: 32 x 65536 eager_bf16_sr
+adamw: 1 x 1024 compiled_bf16_sr
+adamw: 1 x 1024 triton_bf16_sr
+adamw: 1 x 1024 compiled_bf16_nr
+adamw: 1 x 1024 compiled_fp32
+adamw: 1 x 1024 triton_bf16_nr
+adamw: 1 x 1024 eager_fp32
+adamw: 1 x 1024 triton_fp32
+adamw: 1 x 1024 eager_bf16_nr
+adamw: 1 x 1024 eager_bf16_sr
+adamw: 1 x 1048576 triton_fp32
+adamw: 1 x 1048576 eager_bf16_nr
+adamw: 1 x 1048576 compiled_bf16_nr
+adamw: 1 x 1048576 triton_bf16_nr
+adamw: 1 x 1048576 triton_bf16_sr
+adamw: 1 x 1048576 compiled_fp32
+adamw: 1 x 1048576 compiled_bf16_sr
+adamw: 1 x 1048576 eager_fp32
+adamw: 1 x 1048576 eager_bf16_sr
+adamw: 1 x 16777216 compiled_fp32
+adamw: 1 x 16777216 triton_bf16_nr
+adamw: 1 x 16777216 eager_bf16_nr
+adamw: 1 x 16777216 compiled_bf16_sr
+adamw: 1 x 16777216 eager_fp32
+adamw: 1 x 16777216 triton_bf16_sr
+adamw: 1 x 16777216 eager_bf16_sr
+adamw: 1 x 16777216 compiled_bf16_nr
+adamw: 1 x 16777216 triton_fp32
+adamw: 32 x 4096 compiled_bf16_sr
+adamw: 32 x 4096 triton_bf16_sr
+adamw: 32 x 4096 compiled_bf16_nr
+adamw: 32 x 4096 compiled_fp32
+adamw: 32 x 4096 triton_bf16_nr
+adamw: 32 x 4096 eager_fp32
+adamw: 32 x 4096 triton_fp32
+adamw: 32 x 4096 eager_bf16_nr
+adamw: 32 x 4096 eager_bf16_sr
+adamw: 32 x 65536 triton_fp32
+adamw: 32 x 65536 eager_bf16_nr
+adamw: 32 x 65536 compiled_bf16_nr
+adamw: 32 x 65536 triton_bf16_nr
+adamw: 32 x 65536 triton_bf16_sr
+adamw: 32 x 65536 compiled_fp32
+adamw: 32 x 65536 compiled_bf16_sr
+adamw: 32 x 65536 eager_fp32
+adamw: 32 x 65536 eager_bf16_sr
+quadratic-1048576-1: adamw eager_sr
+  step 647.75 us; CUDA events 641.31 us
+quadratic-1048576-1: adamw triton_nr
+  step 85.00 us; CUDA events 79.04 us
+quadratic-1048576-1: adamw compiled_sr
+  step 135.37 us; CUDA events 129.54 us
+quadratic-1048576-1: adamw triton_sr
+  step 86.32 us; CUDA events 80.54 us
+quadratic-1048576-1: adamw native_nr
+  step 152.75 us; CUDA events 146.86 us
+quadratic-1048576-1: sgdm compiled_sr
+  step 115.28 us; CUDA events 109.38 us
+quadratic-1048576-1: sgdm native_nr
+  step 88.24 us; CUDA events 82.22 us
+quadratic-1048576-1: sgdm triton_sr
+  step 80.31 us; CUDA events 74.42 us
+quadratic-1048576-1: sgdm eager_sr
+  step 345.00 us; CUDA events 338.90 us
+quadratic-1048576-1: sgdm triton_nr
+  step 79.40 us; CUDA events 73.50 us
+quadratic-1048576-32: adamw triton_nr
+  step 1279.72 us; CUDA events 1273.90 us
+quadratic-1048576-32: adamw compiled_sr
+  step 2611.15 us; CUDA events 2605.14 us
+quadratic-1048576-32: adamw eager_sr
+  step 18448.48 us; CUDA events 18441.62 us
+quadratic-1048576-32: adamw native_nr
+  step 3383.81 us; CUDA events 3377.70 us
+quadratic-1048576-32: adamw triton_sr
+  step 1296.36 us; CUDA events 1290.58 us
+quadratic-1048576-32: sgdm native_nr
+  step 1550.13 us; CUDA events 1544.21 us
+quadratic-1048576-32: sgdm triton_nr
+  step 1055.79 us; CUDA events 1050.08 us
+quadratic-1048576-32: sgdm eager_sr
+  step 9000.30 us; CUDA events 8993.92 us
+quadratic-1048576-32: sgdm triton_sr
+  step 1067.28 us; CUDA events 1061.55 us
+quadratic-1048576-32: sgdm compiled_sr
+  step 1972.11 us; CUDA events 1966.08 us
+quadratic-16777216-1: adamw native_nr
+  step 627.87 us; CUDA events 621.44 us
+quadratic-16777216-1: adamw triton_nr
+  step 145.53 us; CUDA events 139.30 us
+quadratic-16777216-1: adamw eager_sr
+  step 5033.22 us; CUDA events 5026.24 us
+quadratic-16777216-1: adamw compiled_sr
+  step 381.07 us; CUDA events 374.75 us
+quadratic-16777216-1: adamw triton_sr
+  step 146.05 us; CUDA events 139.71 us
+quadratic-16777216-1: sgdm compiled_sr
+  step 148.92 us; CUDA events 142.61 us
+quadratic-16777216-1: sgdm eager_sr
+  step 2494.40 us; CUDA events 2487.65 us
+quadratic-16777216-1: sgdm triton_nr
+  step 124.20 us; CUDA events 117.87 us
+quadratic-16777216-1: sgdm triton_sr
+  step 124.34 us; CUDA events 118.11 us
+quadratic-16777216-1: sgdm native_nr
+  step 290.57 us; CUDA events 284.19 us
+quadratic-16777216-32: adamw triton_sr
+  step 1302.90 us; CUDA events 1296.88 us
+quadratic-16777216-32: adamw native_nr
+  step 3391.12 us; CUDA events 3385.23 us
+quadratic-16777216-32: adamw triton_nr
+  step 1304.61 us; CUDA events 1298.85 us
+quadratic-16777216-32: adamw compiled_sr
+  step 2621.49 us; CUDA events 2615.38 us
+quadratic-16777216-32: adamw eager_sr
+  step 18586.27 us; CUDA events 18579.18 us
+quadratic-16777216-32: sgdm compiled_sr
+  step 1982.40 us; CUDA events 1976.30 us
+quadratic-16777216-32: sgdm eager_sr
+  step 9076.20 us; CUDA events 9069.81 us
+quadratic-16777216-32: sgdm native_nr
+  step 1555.24 us; CUDA events 1549.30 us
+quadratic-16777216-32: sgdm triton_nr
+  step 1071.03 us; CUDA events 1065.70 us
+quadratic-16777216-32: sgdm triton_sr
+  step 1080.12 us; CUDA events 1074.22 us
+mlp-512-4-64: adamw eager_sr
+  step 6191.95 us; CUDA events 6186.19 us
+mlp-512-4-64: adamw triton_sr
+  step 520.50 us; CUDA events 515.20 us
+mlp-512-4-64: adamw compiled_sr
+  step 1202.79 us; CUDA events 1196.85 us
+mlp-512-4-64: adamw triton_nr
+  step 513.11 us; CUDA events 507.58 us
+mlp-512-4-64: adamw native_nr
+  step 1220.18 us; CUDA events 1214.37 us
+mlp-512-4-64: sgdm triton_sr
+  step 455.33 us; CUDA events 450.02 us
+mlp-512-4-64: sgdm native_nr
+  step 595.11 us; CUDA events 589.97 us
+mlp-512-4-64: sgdm compiled_sr
+  step 958.68 us; CUDA events 952.40 us
+mlp-512-4-64: sgdm eager_sr
+  step 3122.43 us; CUDA events 3116.70 us
+mlp-512-4-64: sgdm triton_nr
+  step 456.06 us; CUDA events 450.86 us

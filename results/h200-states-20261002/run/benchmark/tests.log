@@ -1,0 +1,57 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.6.0
+rootdir: /scratch/kt2664/Stochastic-Rounding-for-Numerical-Optimization-with-State-Quantization
+configfile: pyproject.toml
+testpaths: tests
+collected 301 items
+
+tests/test_benchmark_helpers.py ........                                 [  2%]
+tests/test_cast_benchmark.py .....                                       [  4%]
+tests/test_compiled.py ..                                                [  4%]
+tests/test_cuda_cast.py .                                                [  5%]
+tests/test_optimizer_steps_benchmark.py ................................ [ 15%]
+........                                                                 [ 18%]
+tests/test_reference_optimizers.py .....                                 [ 20%]
+tests/test_seed_reproducibility.py ....                                  [ 21%]
+tests/test_sr_edge_cases.py ......                                       [ 23%]
+tests/test_sr_statistics.py ..                                           [ 24%]
+tests/test_state_benchmark.py .......................                    [ 31%]
+tests/test_state_optimizers.py ................................          [ 42%]
+tests/test_triton_api.py ..........                                      [ 45%]
+tests/test_triton_casts.py ............................................. [ 60%]
+.................................                                        [ 71%]
+tests/test_triton_sgdm.py .........                                      [ 74%]
+tests/test_triton_sr_cast.py ......                                      [ 76%]
+tests/test_triton_states.py ............................................ [ 91%]
+........................ss                                               [100%]
+
+=============================== warnings summary ===============================
+tests/test_cuda_cast.py: 14 warnings
+  /scratch/kt2664/venvs/tilde/lib/python3.13/site-packages/torch/jit/_script.py:365: DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`.
+    warnings.warn(
+
+tests/test_state_optimizers.py::test_closure_and_sparse_gradient[AdamWTriton]
+  /scratch/kt2664/Stochastic-Rounding-for-Numerical-Optimization-with-State-Quantization/tests/test_state_optimizers.py:110: UserWarning: Sparse invariant checks are implicitly disabled. Memory errors (e.g. SEGFAULT) will occur when operating on a sparse tensor which violates the invariants, but checks incur performance overhead. To silence this warning, explicitly opt in or out. See `torch.sparse.check_sparse_tensor_invariants.__doc__` for guidance.  (Triggered internally at /pytorch/aten/src/ATen/Context.cpp:760.)
+    p.grad = torch.sparse_coo_tensor([[0]], [1.0], size=(4,), check_invariants=True)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+- generated xml file: /scratch/kt2664/Stochastic-Rounding-for-Numerical-Optimization-with-State-Quantization/results/raw/main-state-timing-20261002T011750Z/gpu-tests.xml -
+============================= slowest 15 durations =============================
+23.96s call     tests/test_cuda_cast.py::test_cuda_compiled_cast_matches_reference
+10.52s call     tests/test_compiled.py::test_compiled_sr_matches_eager_frontend
+8.09s call     tests/test_optimizer_steps_benchmark.py::test_gpu_synthetic_full_steps[mlp-compiled_sr-adamw]
+6.08s call     tests/test_triton_states.py::test_inductor_complete_updates[adamw]
+5.09s call     tests/test_optimizer_steps_benchmark.py::test_gpu_synthetic_full_steps[mlp-compiled_sr-sgdm]
+4.48s call     tests/test_triton_states.py::test_inductor_complete_updates[sgdm]
+3.79s call     tests/test_optimizer_steps_benchmark.py::test_gpu_synthetic_full_steps[quadratic-compiled_sr-adamw]
+3.36s call     tests/test_triton_casts.py::test_launch_and_store_variants_preserve_cast_contract[convert-1-4096]
+2.96s call     tests/test_triton_casts.py::test_launch_and_store_variants_preserve_cast_contract[bits-1-4096]
+2.50s call     tests/test_triton_casts.py::test_launch_and_store_variants_preserve_cast_contract[convert-1-128]
+2.32s call     tests/test_optimizer_steps_benchmark.py::test_gpu_synthetic_full_steps[quadratic-compiled_sr-sgdm]
+2.21s call     tests/test_triton_casts.py::test_nearest_cast_matches_native_and_cpu[1-128]
+2.12s call     tests/test_triton_casts.py::test_launch_and_store_variants_preserve_cast_contract[bits-2-4096]
+1.97s call     tests/test_triton_casts.py::test_launch_and_store_variants_preserve_cast_contract[convert-2-4096]
+1.77s call     tests/test_triton_casts.py::test_launch_and_store_variants_preserve_cast_contract[convert-1-2048]
+=========================== short test summary info ============================
+SKIPPED [2] tests/test_triton_states.py:201: requires two CUDA devices
+=========== 299 passed, 2 skipped, 15 warnings in 190.27s (0:03:10) ============

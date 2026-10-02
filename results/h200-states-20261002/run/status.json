@@ -1,0 +1,15 @@
+{
+  "state": "completed",
+  "started_utc": "2026-10-02T01:29:31.636180+00:00",
+  "job_id": "18994353",
+  "commit": "ef5c8b4be05834ed50e15e3831d1c56c4b818803",
+  "gpu": "NVIDIA H200",
+  "device_count": 1,
+  "command": [
+    "bash",
+    "scripts/run_state_validation.sh",
+    "/scratch/kt2664/Stochastic-Rounding-for-Numerical-Optimization-with-State-Quantization/results/raw/main-state-timing-20261002T011750Z/benchmark"
+  ],
+  "exit_code": 0,
+  "finished_utc": "2026-10-02T01:43:33.090930+00:00"
+}

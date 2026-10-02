@@ -1,0 +1,4 @@
+# Preserve original CSV bytes and allow the CSV writer's CRLF line endings.
+results/h200-states-20261002/**/*.csv -text whitespace=cr-at-eol
+# A recorded diff includes single-space blank context lines.
+results/h200-states-20261002/run/source.patch -text whitespace=-blank-at-eol

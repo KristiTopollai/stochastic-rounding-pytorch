@@ -75,11 +75,31 @@ Gradients, initialization, and compilation are outside timing; steps and RNG
 counters advance throughout each run. CSVs contain synchronized step latency
 (including event-wait overhead), CUDA-event and CPU-submission samples, and
 speedups against both NR baselines. CUDA-event times include host submission
-gaps. CUDA graphs are disabled. Optimizer GPU results are pending.
+gaps. CUDA graphs are disabled. [Recorded H200 optimizer results](results/h200-states-20261002/README.md)
+include all samples, validation logs, and paired comparisons.
 
 `bench_sgdm` and `bench_adamw` are fixed-input update microbenchmarks covering
 eager/compiled/Triton with BF16 SR, BF16 NR, and FP32 states. Inputs, counters,
 and step numbers reset outside each sample; here `--sizes` is elements per tensor.
+
+## Optimizer step results
+
+H200, one FP32 tensor with 16,777,216 parameters and BF16 optimizer states.
+Times are synchronized `optimizer.step()` wall latency in microseconds, excluding
+gradient computation: median of three process medians, 100 samples each.
+
+| Method | AdamW (µs) | SGDM (µs) |
+| --- | ---: | ---: |
+| Native NR reference | 627.87 | 289.72 |
+| Matched Triton NR | 145.51 | 122.31 |
+| Eager SR | 5,033.19 | 2,494.40 |
+| Compiled SR | 381.07 | 147.20 |
+| Triton SR | 145.90 | 122.94 |
+
+Paired speedups over compiled SR are **2.61× for AdamW** and **1.20× for SGDM**.
+Matched Triton NR overhead is **0.27%** and **0.25%**, respectively. These synthetic
+optimizer timings do not measure end-to-end training speed or convergence.
+[Full report and reproduction](results/h200-states-20261002/README.md).
 
 ## Standalone cast results
 

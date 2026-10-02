@@ -1,0 +1,100 @@
+quadratic-1048576-1: adamw eager_sr
+  step 653.61 us; CUDA events 647.15 us
+quadratic-1048576-1: adamw compiled_sr
+  step 130.95 us; CUDA events 124.85 us
+quadratic-1048576-1: adamw triton_sr
+  step 85.19 us; CUDA events 79.31 us
+quadratic-1048576-1: adamw native_nr
+  step 152.00 us; CUDA events 145.84 us
+quadratic-1048576-1: adamw triton_nr
+  step 83.93 us; CUDA events 77.97 us
+quadratic-1048576-1: sgdm native_nr
+  step 85.51 us; CUDA events 79.52 us
+quadratic-1048576-1: sgdm eager_sr
+  step 346.10 us; CUDA events 340.06 us
+quadratic-1048576-1: sgdm triton_nr
+  step 77.04 us; CUDA events 71.15 us
+quadratic-1048576-1: sgdm triton_sr
+  step 76.69 us; CUDA events 70.72 us
+quadratic-1048576-1: sgdm compiled_sr
+  step 110.89 us; CUDA events 104.99 us
+quadratic-1048576-32: adamw eager_sr
+  step 18701.92 us; CUDA events 18694.94 us
+quadratic-1048576-32: adamw compiled_sr
+  step 2501.51 us; CUDA events 2495.26 us
+quadratic-1048576-32: adamw triton_sr
+  step 1278.78 us; CUDA events 1272.70 us
+quadratic-1048576-32: adamw native_nr
+  step 3400.10 us; CUDA events 3394.02 us
+quadratic-1048576-32: adamw triton_nr
+  step 1255.74 us; CUDA events 1249.81 us
+quadratic-1048576-32: sgdm triton_nr
+  step 1045.16 us; CUDA events 1039.33 us
+quadratic-1048576-32: sgdm native_nr
+  step 1561.20 us; CUDA events 1555.33 us
+quadratic-1048576-32: sgdm eager_sr
+  step 9107.18 us; CUDA events 9101.01 us
+quadratic-1048576-32: sgdm triton_sr
+  step 1055.70 us; CUDA events 1049.70 us
+quadratic-1048576-32: sgdm compiled_sr
+  step 1900.61 us; CUDA events 1894.29 us
+quadratic-16777216-1: adamw triton_nr
+  step 144.67 us; CUDA events 138.35 us
+quadratic-16777216-1: adamw native_nr
+  step 627.63 us; CUDA events 621.01 us
+quadratic-16777216-1: adamw triton_sr
+  step 145.01 us; CUDA events 138.69 us
+quadratic-16777216-1: adamw eager_sr
+  step 5033.15 us; CUDA events 5026.16 us
+quadratic-16777216-1: adamw compiled_sr
+  step 380.44 us; CUDA events 374.13 us
+quadratic-16777216-1: sgdm eager_sr
+  step 2494.13 us; CUDA events 2487.28 us
+quadratic-16777216-1: sgdm compiled_sr
+  step 146.74 us; CUDA events 140.37 us
+quadratic-16777216-1: sgdm triton_nr
+  step 122.31 us; CUDA events 115.87 us
+quadratic-16777216-1: sgdm native_nr
+  step 289.72 us; CUDA events 283.15 us
+quadratic-16777216-1: sgdm triton_sr
+  step 122.61 us; CUDA events 116.24 us
+quadratic-16777216-32: adamw triton_nr
+  step 1274.12 us; CUDA events 1268.13 us
+quadratic-16777216-32: adamw compiled_sr
+  step 2522.26 us; CUDA events 2516.10 us
+quadratic-16777216-32: adamw eager_sr
+  step 18804.21 us; CUDA events 18797.71 us
+quadratic-16777216-32: adamw triton_sr
+  step 1277.71 us; CUDA events 1271.87 us
+quadratic-16777216-32: adamw native_nr
+  step 3419.33 us; CUDA events 3413.46 us
+quadratic-16777216-32: sgdm eager_sr
+  step 9204.28 us; CUDA events 9197.76 us
+quadratic-16777216-32: sgdm native_nr
+  step 1561.73 us; CUDA events 1555.79 us
+quadratic-16777216-32: sgdm triton_sr
+  step 1075.11 us; CUDA events 1069.06 us
+quadratic-16777216-32: sgdm triton_nr
+  step 1067.69 us; CUDA events 1061.39 us
+quadratic-16777216-32: sgdm compiled_sr
+  step 1922.74 us; CUDA events 1916.40 us
+mlp-512-4-64: adamw native_nr
+  step 1236.27 us; CUDA events 1230.64 us
+mlp-512-4-64: adamw eager_sr
+  step 6284.67 us; CUDA events 6277.14 us
+mlp-512-4-64: adamw compiled_sr
+  step 1172.39 us; CUDA events 1166.83 us
+mlp-512-4-64: adamw triton_nr
+  step 518.91 us; CUDA events 513.49 us
+mlp-512-4-64: adamw triton_sr
+  step 513.19 us; CUDA events 507.87 us
+mlp-512-4-64: sgdm eager_sr
+  step 3174.66 us; CUDA events 3168.42 us
+mlp-512-4-64: sgdm native_nr
+  step 599.14 us; CUDA events 593.86 us
+mlp-512-4-64: sgdm compiled_sr
+  step 924.60 us; CUDA events 919.23 us
+mlp-512-4-64: sgdm triton_nr
+  step 451.67 us; CUDA events 446.35 us
+mlp-512-4-64: sgdm triton_sr
+  step 455.01 us; CUDA events 449.25 us
