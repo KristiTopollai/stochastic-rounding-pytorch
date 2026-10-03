@@ -20,8 +20,8 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/PastaAddict/stochastic-rounding-pytorch"
-Issues = "https://github.com/PastaAddict/stochastic-rounding-pytorch/issues"
+Repository = "https://github.com/KristiTopollai/stochastic-rounding-pytorch"
+Issues = "https://github.com/KristiTopollai/stochastic-rounding-pytorch/issues"
 
 [project.optional-dependencies]
 triton = ["triton>=3.0; platform_system == 'Linux'"]

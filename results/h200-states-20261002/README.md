@@ -4,7 +4,7 @@ Completed job **18994353** on H200 node `gh105` in **14m 17s**. The run finished
 2026-10-02 at 01:43 UTC (2026-10-01, 21:43 America/New_York). It used Python 3.13.5,
 PyTorch 2.11.0+cu128, CUDA 12.8, and Triton 3.6.0.
 
-The source is commit [de62a14](https://github.com/PastaAddict/stochastic-rounding-pytorch/commit/de62a14b33163f64e6d61178288522075ccf71f2)
+The source is commit [de62a14](https://github.com/KristiTopollai/stochastic-rounding-pytorch/commit/de62a14b33163f64e6d61178288522075ccf71f2)
 plus the [recorded test-isolation patch](run/source.patch), now included in the
 repository. The archive records this commit as `ef5c8b4` before author attribution
 was corrected; its source tree is unchanged. All 43 original artifacts are preserved byte for byte under
