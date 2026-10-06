@@ -3,6 +3,10 @@
 FP32-to-BF16 stochastic rounding, with standalone casts and BF16 optimizer-state
 storage in PyTorch and Triton.
 
+All optimizer backends use a shared rounding registry. Only FP32 and BF16 are
+enabled by default; adding a future format or rounding rule does not require
+editing the SGDM or AdamW update equations.
+
 ## Install
 
 Python 3.10+ and PyTorch 2.5+. Triton requires Linux, an NVIDIA GPU, and
@@ -15,6 +19,25 @@ pip install -e '.[triton]'
 ## Usage
 
 ### Casting
+
+The common interface selects storage dtype and rounding independently:
+
+```python
+import torch
+from sr_states import cast
+from sr_states.compiled import compile_cast
+
+x = torch.tensor([1.003, -1.006], dtype=torch.float32)
+y = cast(x, dtype=torch.bfloat16, rounding="stochastic", seed=7)
+y_nearest = cast(x, dtype=torch.bfloat16, rounding="nearest")
+compiled_cast = compile_cast(fullgraph=True)
+y_compiled = compiled_cast(x, dtype=torch.bfloat16, rounding="stochastic", seed=7)
+```
+
+`sr_states.triton.cast` accepts the same dtype, rounding, seed, and offset options
+for contiguous CUDA inputs, plus block-size and warp-count options. It uses the
+same registered JIT callback as the fused optimizer kernels. The older BF16-only
+cast helpers remain compatibility entry points.
 
 ```python
 import torch
@@ -66,6 +89,66 @@ weight decay, sparse gradients, and AMSGrad are not supported.
 Eager optimizers are in `sr_states.optim`; compiled SR optimizers are in
 `sr_states.compiled`.
 
+### Adding a rounding routine
+
+Register a stable name and a storage dtype, then select them through the existing
+`rounding` and `state_dtype` optimizer arguments. For example, a BF16 truncation
+rule can be added without modifying any optimizer:
+
+```python
+from sr_states import AdamWReferenceSR, register_rounding
+
+
+def toward_zero(x, *, dtype, seed, offset):
+    bits = x.contiguous().view(torch.int32) & -65536
+    return bits.view(torch.float32).to(dtype)
+
+
+register_rounding("toward_zero", torch.bfloat16, reference=toward_zero)
+p = torch.nn.Parameter(torch.ones(1024))
+optimizer = AdamWReferenceSR([p], rounding="toward_zero", state_dtype=torch.bfloat16)
+```
+
+The reference routine receives FP32 proposals and must return the requested dtype
+with unchanged shape/device, without mutating the input. Compiled optimizers trace
+the same routine, so it must support `torch.compile` when used in that backend.
+The parameter update uses the unrounded FP32 proposals, as before.
+
+To use the rule in fused Triton optimizers, include a JIT implementation in its
+registration. Register it once, with both implementations, instead of first
+performing the reference-only registration above:
+
+```python
+import triton
+import triton.language as tl
+
+
+@triton.jit
+def toward_zero_triton(value, counter, dtype: tl.constexpr):
+    bits = value.to(tl.uint32, bitcast=True) & 0xFFFF0000
+    return bits.to(tl.float32, bitcast=True).to(dtype)
+
+
+register_rounding("toward_zero", torch.bfloat16, reference=toward_zero, triton=toward_zero_triton)
+```
+
+The JIT routine takes an FP32 block, uint32 counters (`seed + offset + index`,
+modulo 2³²), and a destination `tl.dtype`. It must return already-rounded values
+for storage. AdamW gives its two moments distinct consecutive counter ranges.
+The callback is a compile-time kernel argument; it does not add a separate GPU
+launch. A missing Triton implementation raises an error rather than substituting
+another rounding rule.
+
+Registrations are process-local and cannot overwrite existing entries. Register
+custom routines before constructing/compiling optimizers and before restoring
+their checkpoints. Checkpoints store the rule name, dtype, seed, and offset, not
+callables. Parameter-group overrides and checkpoint rules are validated against
+the selected backend. Existing checkpoints and built-in behavior are preserved.
+
+This extension point handles elementwise, unscaled casts to floating-point
+storage. A future scaled or blockwise quantizer with additional state will need
+an explicit metadata/storage extension. No FP8 routine is included in this change.
+
 ## Tests and benchmarks
 
 ```bash
@@ -80,6 +163,10 @@ python -m benchmarks.bench_sr_cast --output results/raw/cast.csv
 `bash scripts/run_state_validation.sh` runs the tests and three repeats of the
 optimizer benchmarks, saving samples and environment details. The H200 run
 passed **299 tests**; two tests requiring a second GPU were skipped.
+
+Linux CI also compiles the standalone cast and both fused optimizer kernels for
+Hopper with built-in and custom callbacks, without a GPU driver. These checks
+validate JIT integration; GPU execution tests remain separate and require CUDA.
 
 `bench_optimizer_steps` times full `optimizer.step()` calls on diagonal quadratics
 and MLP regression, with FP32 parameters/gradients and BF16 states. Compiled SR

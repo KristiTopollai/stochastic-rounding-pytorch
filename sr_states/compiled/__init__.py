@@ -3,6 +3,7 @@
 from .functional import (
     compile_adamw_step,
     compile_adamw_step_,
+    compile_cast,
     compile_sgdm_step,
     compile_sgdm_step_,
     compile_sr_cast,
@@ -14,6 +15,7 @@ __all__ = [
     "SGDMCompiledSR",
     "compile_adamw_step",
     "compile_adamw_step_",
+    "compile_cast",
     "compile_sgdm_step",
     "compile_sgdm_step_",
     "compile_sr_cast",
