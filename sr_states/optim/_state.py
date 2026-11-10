@@ -5,9 +5,24 @@ from __future__ import annotations
 import torch
 from torch.optim import Optimizer
 
+from sr_states.rounding import validate_rounding
+
 
 class StateOptimizer(Optimizer):
     _state_names: tuple[str, ...] = ()
+    _rounding_backend = "reference"
+
+    def _validate_group_rounding(self, group):
+        validate_rounding(
+            group.get("state_dtype", torch.bfloat16),
+            group.get("rounding", "stochastic"),
+            backend=self._rounding_backend,
+        )
+
+    def add_param_group(self, param_group):
+        # Validate overrides too, including groups added after construction.
+        self._validate_group_rounding({**self.defaults, **param_group})
+        super().add_param_group(param_group)
 
     def load_state_dict(self, state_dict):
         # PyTorch casts floating state to the parameter dtype. Preserve the
@@ -15,6 +30,8 @@ class StateOptimizer(Optimizer):
         saved = {}
 
         def capture(optimizer, checkpoint):
+            for group in checkpoint["param_groups"]:
+                optimizer._validate_group_rounding(group)
             for group, source_group in zip(optimizer.param_groups, checkpoint["param_groups"]):
                 for parameter, key in zip(group["params"], source_group["params"]):
                     source = checkpoint["state"].get(key, {})

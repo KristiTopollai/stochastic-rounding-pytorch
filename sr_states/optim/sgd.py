@@ -7,6 +7,7 @@ from collections.abc import Iterable
 import torch
 
 from sr_states.reference.sgd import sgdm_step_
+from sr_states.rounding import validate_rounding
 
 from ._state import StateOptimizer
 
@@ -36,10 +37,7 @@ class SGDMReferenceSR(StateOptimizer):
             raise ValueError(f"invalid learning rate: {lr}")
         if not 0 <= momentum < 1:
             raise ValueError(f"invalid momentum value: {momentum}")
-        if state_dtype not in {torch.bfloat16, torch.float32}:
-            raise ValueError("state_dtype must be torch.bfloat16 or torch.float32")
-        if rounding not in {"stochastic", "nearest"}:
-            raise ValueError("rounding must be 'stochastic' or 'nearest'")
+        validate_rounding(state_dtype, rounding)
         defaults = {
             "lr": lr,
             "momentum": momentum,

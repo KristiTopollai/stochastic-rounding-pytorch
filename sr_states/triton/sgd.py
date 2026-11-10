@@ -7,12 +7,12 @@ from collections.abc import Iterable
 import torch
 
 from sr_states.optim._state import StateOptimizer
+from sr_states.rounding import get_triton_rounding
 
 from ._common import require_triton, tl, triton
 from ._optimizer import nonnegative, validate_options, validate_tensors
 
 if triton is not None:
-    from .sr_cast import _stochastic_bf16_value
 
     @triton.jit
     def _fused_sgdm_kernel(
@@ -24,7 +24,7 @@ if triton is not None:
         momentum_factor,
         seed,
         logical_offset,
-        STOCHASTIC: tl.constexpr,
+        ROUND: tl.constexpr,
         BLOCK_SIZE: tl.constexpr,
     ):
         offsets = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
@@ -38,17 +38,10 @@ if triton is not None:
         updated_momentum = momentum_factor * momentum + gradient
         updated_parameter = parameter - learning_rate * updated_momentum
 
-        if STOCHASTIC:
-            # Logical indexing keeps the random choice independent of the
-            # Triton launch partition and consistent across parameter tensors.
-            counter = (
-                offsets.to(tl.uint32)
-                + tl.cast(seed, tl.uint32)
-                + tl.cast(logical_offset, tl.uint32)
-            )
-            stored_momentum = _stochastic_bf16_value(updated_momentum, counter)
-        else:
-            stored_momentum = updated_momentum
+        counter = (
+            offsets.to(tl.uint32) + tl.cast(seed, tl.uint32) + tl.cast(logical_offset, tl.uint32)
+        )
+        stored_momentum = ROUND(updated_momentum, counter, momentum_ptr.dtype.element_ty)
 
         tl.store(parameter_ptr + offsets, updated_parameter, mask=mask)
         tl.store(momentum_ptr + offsets, stored_momentum, mask=mask)
@@ -97,7 +90,7 @@ def triton_sgdm_step_(
             momentum_factor,
             seed=int(seed) & 0xFFFFFFFF,
             logical_offset=int(offset) & 0xFFFFFFFF,
-            STOCHASTIC=rounding == "stochastic" and momentum.dtype == torch.bfloat16,
+            ROUND=get_triton_rounding(momentum.dtype, rounding),
             BLOCK_SIZE=block_size,
             num_warps=4,
         )
@@ -112,6 +105,7 @@ class SGDMTriton(StateOptimizer):
     """
 
     _state_names = ("momentum_buffer",)
+    _rounding_backend = "triton"
 
     def __init__(
         self,

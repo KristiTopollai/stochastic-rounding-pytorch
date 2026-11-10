@@ -15,6 +15,7 @@ import torch
 from sr_states.reference.adamw import adamw_step, adamw_step_
 from sr_states.reference.rounding import stochastic_round_bf16
 from sr_states.reference.sgd import sgdm_step, sgdm_step_
+from sr_states.rounding import cast
 
 
 def _compile(function: Callable[..., Any], **kwargs) -> Callable[..., Any]:
@@ -27,6 +28,11 @@ def compile_sr_cast(**kwargs) -> Callable[..., torch.Tensor]:
     """Compile the reference stochastic BF16 cast with ``torch.compile``."""
 
     return _compile(stochastic_round_bf16, **kwargs)
+
+
+def compile_cast(**kwargs) -> Callable[..., torch.Tensor]:
+    """Compile the generic cast, including registered reference rounding routines."""
+    return _compile(cast, **kwargs)
 
 
 def compile_sgdm_step(**kwargs) -> Callable[..., tuple[torch.Tensor, torch.Tensor]]:

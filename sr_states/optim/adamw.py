@@ -7,6 +7,7 @@ from collections.abc import Iterable
 import torch
 
 from sr_states.reference.adamw import adamw_step_
+from sr_states.rounding import validate_rounding
 
 from ._state import StateOptimizer
 
@@ -38,10 +39,7 @@ class AdamWReferenceSR(StateOptimizer):
             raise ValueError(f"invalid epsilon value: {eps}")
         if weight_decay < 0:
             raise ValueError(f"invalid weight_decay value: {weight_decay}")
-        if state_dtype not in {torch.bfloat16, torch.float32}:
-            raise ValueError("state_dtype must be torch.bfloat16 or torch.float32")
-        if rounding not in {"stochastic", "nearest"}:
-            raise ValueError("rounding must be 'stochastic' or 'nearest'")
+        validate_rounding(state_dtype, rounding)
         defaults = {
             "lr": lr,
             "betas": betas,

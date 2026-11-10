@@ -5,6 +5,18 @@ on:
   pull_request:
 
 jobs:
+  triton-compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -e '.[dev,triton]'
+      # Compile the actual CUDA kernels with each callback; no GPU driver is required.
+      - run: pytest tests/test_triton_rounding_extensions.py
   cpu:
     runs-on: ubuntu-latest
     strategy:

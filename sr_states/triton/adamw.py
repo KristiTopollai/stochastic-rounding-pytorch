@@ -7,12 +7,12 @@ from collections.abc import Iterable
 import torch
 
 from sr_states.optim._state import StateOptimizer
+from sr_states.rounding import get_triton_rounding
 
 from ._common import require_triton, tl, triton
 from ._optimizer import nonnegative, validate_options, validate_tensors
 
 if triton is not None:
-    from .sr_cast import _stochastic_bf16_value
 
     @triton.jit
     def _fused_adamw_kernel(
@@ -31,7 +31,7 @@ if triton is not None:
         eps,
         seed,
         logical_offset,
-        STOCHASTIC: tl.constexpr,
+        ROUND: tl.constexpr,
         BLOCK_SIZE: tl.constexpr,
     ):
         indices = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
@@ -45,16 +45,13 @@ if triton is not None:
         denominator = tl.sqrt(updated_v) / correction2_sqrt + eps
         updated_parameter = parameter * decay - step_size * (updated_m / denominator)
 
-        if STOCHASTIC:
-            counter = (
-                indices.to(tl.uint32)
-                + tl.cast(seed, tl.uint32)
-                + tl.cast(logical_offset, tl.uint32)
-            )
-            stored_m = _stochastic_bf16_value(updated_m, counter)
-            stored_v = _stochastic_bf16_value(updated_v, counter + tl.cast(n_elements, tl.uint32))
-        else:
-            stored_m, stored_v = updated_m, updated_v
+        counter = (
+            indices.to(tl.uint32) + tl.cast(seed, tl.uint32) + tl.cast(logical_offset, tl.uint32)
+        )
+        stored_m = ROUND(updated_m, counter, exp_avg_ptr.dtype.element_ty)
+        stored_v = ROUND(
+            updated_v, counter + tl.cast(n_elements, tl.uint32), exp_avg_sq_ptr.dtype.element_ty
+        )
         tl.store(parameter_ptr + indices, updated_parameter, mask=mask)
         tl.store(exp_avg_ptr + indices, stored_m, mask=mask)
         tl.store(exp_avg_sq_ptr + indices, stored_v, mask=mask)
@@ -110,7 +107,7 @@ def triton_adamw_step_(
             eps,
             int(seed) & 0xFFFFFFFF,
             int(offset) & 0xFFFFFFFF,
-            STOCHASTIC=rounding == "stochastic" and exp_avg.dtype == torch.bfloat16,
+            ROUND=get_triton_rounding(exp_avg.dtype, rounding),
             BLOCK_SIZE=block_size,
             num_warps=4,
         )
@@ -132,6 +129,7 @@ class AdamWTriton(StateOptimizer):
     """
 
     _state_names = ("exp_avg", "exp_avg_sq")
+    _rounding_backend = "triton"
 
     def __init__(
         self,

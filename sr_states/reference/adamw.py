@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import torch
 
-from .rounding import stochastic_round_bf16
+from sr_states.rounding import cast, validate_rounding
 
 
 def adamw_step(
@@ -28,10 +28,7 @@ def adamw_step(
 
     if step < 1:
         raise ValueError("step must be at least 1")
-    if rounding not in {"stochastic", "nearest"}:
-        raise ValueError("rounding must be 'stochastic' or 'nearest'")
-    if state_dtype not in {torch.bfloat16, torch.float32}:
-        raise ValueError("state_dtype must be torch.bfloat16 or torch.float32")
+    validate_rounding(state_dtype, rounding)
 
     p32 = parameter.float()
     g32 = gradient.float()
@@ -45,13 +42,10 @@ def adamw_step(
     updated_parameter.addcdiv_(m32, denominator, value=-lr / bias_correction1)
     updated_parameter = updated_parameter.to(parameter.dtype)
 
-    if state_dtype == torch.float32:
-        stored_m, stored_v = m32, v32
-    elif rounding == "stochastic":
-        stored_m = stochastic_round_bf16(m32, seed=seed, offset=offset)
-        stored_v = stochastic_round_bf16(v32, seed=seed, offset=offset + m32.numel())
-    else:
-        stored_m, stored_v = m32.to(torch.bfloat16), v32.to(torch.bfloat16)
+    stored_m = cast(m32, dtype=state_dtype, rounding=rounding, seed=seed, offset=offset)
+    stored_v = cast(
+        v32, dtype=state_dtype, rounding=rounding, seed=seed, offset=offset + m32.numel()
+    )
     return updated_parameter, stored_m, stored_v
 
 
