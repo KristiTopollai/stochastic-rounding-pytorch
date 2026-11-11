@@ -61,7 +61,7 @@ def test_synthetic_problems_reproduce_gradients_and_reset(name):
 @pytest.mark.parametrize("method", ["native_nr", "eager_sr", "compiled_sr"])
 def test_full_optimizer_path_advances_and_restarts(kind, method):
     case = bench.build_case(problem("mlp"), kind, method, compile_backend="eager")
-    assert case.optimizer.param_groups[0]["rounding"] == (
+    assert next(iter(case.optimizer.param_groups[0]["state_format"].values()))["rounding"] == (
         "nearest" if method == "native_nr" else "stochastic"
     )
     bench.validate_case(case)

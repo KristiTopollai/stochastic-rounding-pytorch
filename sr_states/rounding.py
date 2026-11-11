@@ -1,6 +1,6 @@
 """Named, backend-aware rounding routines shared by casts and every optimizer.
 
-Only FP32 and BF16 routines are registered by default. Registrations are process
+FP32, BF16, FP16 and FP8 E4M3/E5M2 are built in. Registrations are process
 local: import a custom routine's registration module before loading its checkpoints.
 """
 
@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import torch
 
 from ._bf16 import stochastic_round_bf16
+from ._minifloat import nearest_minifloat, stochastic_minifloat
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,10 @@ def register_rounding(
     for tl.store. Each element owns one counter; implementations needing more
     random words must derive them within that element's stream.
 
+    Built-ins include nearest and stochastic rules for FP32, BF16, FP16,
+    float8_e4m3fn and float8_e5m2. FP8 rules saturate overflow/Inf to max
+    finite and preserve NaN. FP16/BF16 use IEEE overflow behavior.
+
     Register before constructing optimizers or compiling updates. Names and
     dtypes are stored in checkpoints; callables are not. Replacing an existing
     registration is forbidden to prevent silently changing resumed computations.
@@ -66,8 +71,14 @@ def validate_rounding(dtype: torch.dtype, rounding: str, *, backend: str = "refe
     """Validate a dtype/rule/backend combination without loading GPU dependencies."""
     if backend not in {"reference", "triton"}:
         raise ValueError(f"unknown rounding backend: {backend!r}")
-    if not isinstance(rounding, str) or (dtype, rounding) not in _ROUTINES:
-        raise ValueError(f"no rounding {rounding!r} registered for state_dtype={dtype}")
+    if (
+        not isinstance(dtype, torch.dtype)
+        or not isinstance(rounding, str)
+        or (dtype, rounding) not in _ROUTINES
+    ):
+        raise ValueError(
+            f"no rounding {rounding!r} registered for state_dtype={dtype}; register before loading checkpoints"
+        )
     if backend == "triton" and _ROUTINES[dtype, rounding].triton is None:
         raise ValueError(f"rounding {rounding!r} for {dtype} has no Triton implementation")
 
@@ -93,6 +104,9 @@ def cast(
 ) -> torch.Tensor:
     """Apply a registered rounding routine to FP32 input, preserving shape/device.
 
+    FP8 casts saturate finite overflow and Inf to signed max finite; NaN stays
+    NaN. FP16/BF16 retain IEEE overflow/Inf behavior. Signed zero is preserved.
+    Minifloat SR uses 24 random bits (see README for its resolution bound).
     BF16 stochastic and nearest-even casts allocate outputs; FP32 built-ins
     are no-ops. BF16 exceptional-value and RNG behavior is unchanged. No scaling
     is performed. Custom routines define their own numerical rounding behavior.
@@ -122,3 +136,7 @@ _ROUTINES[torch.float32, "nearest"] = _Routine(_nearest, "identity")
 _ROUTINES[torch.float32, "stochastic"] = _Routine(_nearest, "identity")
 _ROUTINES[torch.bfloat16, "nearest"] = _Routine(_nearest, "nearest")
 _ROUTINES[torch.bfloat16, "stochastic"] = _Routine(_stochastic_bf16, "stochastic_bf16")
+
+for _dtype in (torch.float8_e4m3fn, torch.float8_e5m2, torch.float16):
+    _ROUTINES[_dtype, "nearest"] = _Routine(nearest_minifloat, "nearest_minifloat")
+    _ROUTINES[_dtype, "stochastic"] = _Routine(stochastic_minifloat, "stochastic_minifloat")

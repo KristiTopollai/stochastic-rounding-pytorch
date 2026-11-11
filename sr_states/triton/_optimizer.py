@@ -36,8 +36,6 @@ def validate_tensors(parameter, gradient, *states):
         torch.bfloat16,
     }:
         raise TypeError("parameter and gradient must be FP32 or BF16")
-    if any(state.dtype != states[0].dtype for state in states):
-        raise TypeError("state tensors must have the same dtype")
     # Overlapping writable tensors would introduce inter-program races.
     spans = sorted((tensor.data_ptr(), tensor.data_ptr() + tensor.nbytes) for tensor in tensors)
     if any(end > start for (_, end), (start, _) in itertools.pairwise(spans)):

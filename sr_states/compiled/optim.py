@@ -15,7 +15,7 @@ def _update_function(compiler, compile_kwargs):
 
 
 class AdamWCompiledSR(AdamWReferenceSR):
-    """AdamW with compiled FP32 updates and BF16 stochastic state writes."""
+    """AdamW with compiled FP32 updates and per-state storage formats."""
 
     def __init__(self, params, *, compile_kwargs=None, **kwargs):
         super().__init__(params, **kwargs)
@@ -23,7 +23,7 @@ class AdamWCompiledSR(AdamWReferenceSR):
 
 
 class SGDMCompiledSR(SGDMReferenceSR):
-    """Momentum SGD with compiled FP32 updates and BF16 stochastic state writes."""
+    """Momentum SGD with compiled FP32 updates and configurable state storage."""
 
     def __init__(self, params, lr, momentum=0.9, *, compile_kwargs=None, **kwargs):
         super().__init__(params, lr=lr, momentum=momentum, **kwargs)

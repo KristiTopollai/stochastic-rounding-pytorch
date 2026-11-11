@@ -1,91 +1,69 @@
-"""Readable PyTorch SGDM optimizers with an explicit state precision policy."""
+"""PyTorch momentum SGD with configurable state storage."""
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-
-import torch
+import math
 
 from sr_states.reference.sgd import sgdm_step_
-from sr_states.rounding import validate_rounding
 
 from ._state import StateOptimizer
 
 
-class SGDMReferenceSR(StateOptimizer):
-    """Momentum SGD with FP32 math and FP32/BF16 state storage.
+def validate_sgdm(group):
+    if not math.isfinite(group["lr"]) or group["lr"] < 0:
+        raise ValueError(f"invalid learning rate: {group['lr']}")
+    if not 0 <= group["momentum"] < 1:
+        raise ValueError(f"invalid momentum value: {group['momentum']}")
 
-    BF16 state uses stochastic rounding by default. RNG state is represented by
-    ``sr_seed`` and ``sr_offset`` in each parameter group, so optimizer
-    ``state_dict`` checkpoints reproduce the subsequent random choices.
-    """
+
+class SGDMReferenceSR(StateOptimizer):
+    """Momentum SGD with FP32 math; BF16 stochastic storage by default."""
 
     _state_names = ("momentum_buffer",)
+    _uses_step = False
     _update = staticmethod(sgdm_step_.__wrapped__)
 
     def __init__(
         self,
-        params: Iterable[torch.Tensor],
-        lr: float,
-        momentum: float = 0.9,
+        params,
+        lr,
+        momentum=0.9,
         *,
-        state_dtype: torch.dtype = torch.bfloat16,
-        rounding: str = "stochastic",
-        seed: int = 0,
-    ) -> None:
-        if lr < 0:
-            raise ValueError(f"invalid learning rate: {lr}")
-        if not 0 <= momentum < 1:
-            raise ValueError(f"invalid momentum value: {momentum}")
-        validate_rounding(state_dtype, rounding)
-        defaults = {
-            "lr": lr,
-            "momentum": momentum,
-            "state_dtype": state_dtype,
-            "rounding": rounding,
-            "sr_seed": int(seed),
-            "sr_offset": 0,
-        }
-        super().__init__(params, defaults)
+        state_format=None,
+        state_dtype=None,
+        rounding=None,
+        seed=0,
+    ):
+        super().__init__(
+            params,
+            {"lr": lr, "momentum": momentum},
+            state_format=state_format,
+            state_dtype=state_dtype,
+            rounding=rounding,
+            seed=seed,
+        )
 
-    @torch.no_grad()
-    def step(self, closure=None):
-        loss = None
-        if closure is not None:
-            with torch.enable_grad():
-                loss = closure()
+    def _validate_group(self, group):
+        validate_sgdm(group)
 
-        offset = self._next_offset()
-        for group in self.param_groups:
-            for parameter in group["params"]:
-                if parameter.grad is None:
-                    continue
-                if parameter.grad.is_sparse:
-                    raise RuntimeError("SGDMReferenceSR does not support sparse gradients")
-                state = self.state[parameter]
-                if "momentum_buffer" not in state:
-                    state["momentum_buffer"] = torch.zeros_like(
-                        parameter, dtype=group["state_dtype"], memory_format=torch.preserve_format
-                    )
-                self._update(
-                    parameter,
-                    parameter.grad,
-                    state["momentum_buffer"],
-                    lr=group["lr"],
-                    momentum_factor=group["momentum"],
-                    state_dtype=group["state_dtype"],
-                    rounding=group["rounding"],
-                    seed=group["sr_seed"],
-                    offset=offset,
-                )
-                offset += parameter.numel()
-                group["sr_offset"] = offset
-        return loss
+    def _step_parameter(self, parameter, state, group, formats, step, offset):
+        self._update(
+            parameter,
+            parameter.grad,
+            state["momentum_buffer"],
+            lr=group["lr"],
+            momentum_factor=group["momentum"],
+            formats=formats,
+            seed=group["sr_seed"],
+            offset=offset,
+        )
 
 
 class SGDMReferenceRN(SGDMReferenceSR):
-    """Deterministic BF16 round-to-nearest SGDM reference."""
+    """Deterministic round-to-nearest momentum SGD reference (BF16 by default).
 
-    def __init__(self, params, lr: float, momentum: float = 0.9, **kwargs) -> None:
-        kwargs["rounding"] = "nearest"
-        super().__init__(params, lr=lr, momentum=momentum, **kwargs)
+    Accepts the same storage options as ``SGDMReferenceSR``; they select only
+    the state's dtype, and the state uses nearest rounding.
+    """
+
+    _forced_rounding = "nearest"

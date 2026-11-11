@@ -4,7 +4,7 @@ import torch
 
 from sr_states.rounding import get_triton_rounding, validate_rounding
 
-from ._common import require_triton, tl, triton
+from ._common import require_triton, tl, triton, validate_fp8_device
 from .sr_cast import CAST_BLOCK_SIZES, CAST_NUM_WARPS
 
 if triton is not None:
@@ -43,6 +43,7 @@ def cast(x, *, dtype, rounding="stochastic", seed=0, offset=0, block_size=256, n
         raise ValueError(f"block_size must be one of {CAST_BLOCK_SIZES}")
     if num_warps not in CAST_NUM_WARPS:
         raise ValueError(f"num_warps must be one of {CAST_NUM_WARPS}")
+    validate_fp8_device(x.device, dtype)
     output = torch.empty_like(x, dtype=dtype)
     if x.numel():
         with torch.cuda.device(x.device):

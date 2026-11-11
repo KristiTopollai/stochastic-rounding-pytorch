@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import torch
 
-from sr_states.rounding import cast, validate_rounding
+from sr_states.formats import resolve_formats
+from sr_states.rounding import cast
 
 
 def adamw_step(
@@ -19,8 +20,9 @@ def adamw_step(
     eps: float,
     weight_decay: float,
     step: int,
-    state_dtype: torch.dtype = torch.bfloat16,
-    rounding: str = "stochastic",
+    state_dtype: torch.dtype | None = None,
+    formats: tuple | dict | None = None,
+    rounding: str | None = None,
     seed: int = 0,
     offset: int = 0,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -28,7 +30,9 @@ def adamw_step(
 
     if step < 1:
         raise ValueError("step must be at least 1")
-    validate_rounding(state_dtype, rounding)
+    resolved = resolve_formats(
+        ("exp_avg", "exp_avg_sq"), formats, state_dtype=state_dtype, rounding=rounding
+    )
 
     p32 = parameter.float()
     g32 = gradient.float()
@@ -42,9 +46,15 @@ def adamw_step(
     updated_parameter.addcdiv_(m32, denominator, value=-lr / bias_correction1)
     updated_parameter = updated_parameter.to(parameter.dtype)
 
-    stored_m = cast(m32, dtype=state_dtype, rounding=rounding, seed=seed, offset=offset)
+    stored_m = cast(
+        m32, dtype=resolved[0].dtype, rounding=resolved[0].rounding, seed=seed, offset=offset
+    )
     stored_v = cast(
-        v32, dtype=state_dtype, rounding=rounding, seed=seed, offset=offset + m32.numel()
+        v32,
+        dtype=resolved[1].dtype,
+        rounding=resolved[1].rounding,
+        seed=seed,
+        offset=offset + m32.numel(),
     )
     return updated_parameter, stored_m, stored_v
 

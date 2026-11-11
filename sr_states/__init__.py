@@ -1,5 +1,7 @@
 """SR-States public API."""
 
+from .formats import StateFormat
+from .optim._state import StateOptimizer
 from .optim.adamw import AdamWReferenceRN, AdamWReferenceSR
 from .optim.sgd import SGDMReferenceRN, SGDMReferenceSR
 from .rounding import cast, register_rounding
@@ -9,6 +11,8 @@ __all__ = [
     "AdamWReferenceSR",
     "SGDMReferenceRN",
     "SGDMReferenceSR",
+    "StateFormat",
+    "StateOptimizer",
     "cast",
     "register_rounding",
 ]

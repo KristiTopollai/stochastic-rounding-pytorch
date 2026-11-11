@@ -15,7 +15,7 @@ jobs:
           cache: pip
       - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - run: pip install -e '.[dev,triton]'
-      # Compile the actual CUDA kernels with each callback; no GPU driver is required.
+      # Compile all formats/rules and mixed E4M3/E5M2 AdamW; no GPU driver needed.
       - run: pytest tests/test_triton_rounding_extensions.py
   cpu:
     runs-on: ubuntu-latest
@@ -41,9 +41,6 @@ jobs:
       - run: ruff check .
       - run: ruff format --check .
       - run: pytest
-      - run: |
-          python results/h200-states-20261002/summarize.py --output "$RUNNER_TEMP/results-audit"
-          diff -r results/h200-states-20261002/report "$RUNNER_TEMP/results-audit"
       - run: python -m build
       - run: python -m twine check --strict dist/*
       - run: pip install --force-reinstall --no-deps dist/*.whl

@@ -49,10 +49,10 @@ def test_checkpoint_keeps_state_precision(optimizer_class, state_dtype, paramete
 def cpu_state_kernels(monkeypatch):
     # Exercise optimizer bookkeeping on CPU; GPU tests cover the actual kernels.
     def sgdm(p, g, m, *, block_size, **kwargs):
-        sgdm_step_(p, g, m, state_dtype=m.dtype, **kwargs)
+        sgdm_step_(p, g, m, **kwargs)
 
     def adamw(p, g, m, v, *, block_size, **kwargs):
-        adamw_step_(p, g, m, v, state_dtype=m.dtype, **kwargs)
+        adamw_step_(p, g, m, v, **kwargs)
 
     monkeypatch.setattr("sr_states.triton.sgd.triton_sgdm_step_", sgdm)
     monkeypatch.setattr("sr_states.triton.adamw.triton_adamw_step_", adamw)
@@ -124,7 +124,7 @@ def test_closure_and_sparse_gradient(optimizer_class, cpu_state_kernels):
         {"betas": (0.9, 1)},
         {"betas": (float("nan"), 0.9)},
         {"weight_decay": -1},
-        {"state_dtype": torch.float16},
+        {"state_dtype": torch.int32},
         {"rounding": "invalid"},
         {"block_size": 64},
     ],

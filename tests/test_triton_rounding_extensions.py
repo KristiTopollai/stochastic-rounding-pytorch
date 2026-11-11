@@ -34,7 +34,10 @@ def custom_rounding(monkeypatch):
         "toward_zero", torch.bfloat16, reference=reference_toward_zero, triton=toward_zero
     )
     register_rounding(
-        "nearest", torch.float16, reference=lambda x, **kw: x.to(kw["dtype"]), triton=triton_nearest
+        "custom_nearest",
+        torch.float16,
+        reference=lambda x, **kw: x.to(kw["dtype"]),
+        triton=triton_nearest,
     )
 
 
@@ -47,16 +50,29 @@ def custom_rounding(monkeypatch):
         (torch.bfloat16, "nearest"),
         (torch.bfloat16, "stochastic"),
         (torch.bfloat16, "toward_zero"),
-        (torch.float16, "nearest"),
+        (torch.float16, "custom_nearest"),
+        *(
+            (dtype, mode)
+            for dtype in (torch.float16, torch.float8_e4m3fn, torch.float8_e5m2)
+            for mode in ("nearest", "stochastic")
+        ),
     ],
 )
 def test_rounding_callback_compiles_without_gpu(kind, dtype, mode, custom_rounding):
     kernels = {"cast": _cast_kernel, "sgdm": _fused_sgdm_kernel, "adamw": _fused_adamw_kernel}
     kernel = kernels[kind]
-    state_type = {torch.float32: "fp32", torch.bfloat16: "bf16", torch.float16: "fp16"}[dtype]
+    state_type = {
+        torch.float32: "fp32",
+        torch.bfloat16: "bf16",
+        torch.float16: "fp16",
+        torch.float8_e4m3fn: "fp8e4nv",
+        torch.float8_e5m2: "fp8e5",
+    }[dtype]
     states = {"output_ptr", "momentum_ptr", "exp_avg_ptr", "exp_avg_sq_ptr"}
     signature = {}
-    constants = {"ROUND": get_triton_rounding(dtype, mode), "BLOCK_SIZE": 256}
+    constants = {"BLOCK_SIZE": 256}
+    for name in ("ROUND_M", "ROUND_V") if kind == "adamw" else ("ROUND",):
+        constants[name] = get_triton_rounding(dtype, mode)
     for name in kernel.arg_names:
         if name in constants:
             continue
@@ -96,3 +112,34 @@ def test_custom_triton_rounding_matches_reference_on_gpu(kind, custom_rounding):
             torch.testing.assert_close(
                 fused.state[q][name], reference.state[p][name], rtol=8e-3, atol=1e-6
             )
+
+
+@pytest.mark.parametrize("mode", ["nearest", "stochastic"])
+def test_mixed_fp8_adamw_compiles_without_gpu(mode):
+    kernel = _fused_adamw_kernel
+    constants = {
+        "ROUND_M": get_triton_rounding(torch.float8_e4m3fn, mode),
+        "ROUND_V": get_triton_rounding(torch.float8_e5m2, mode),
+        "BLOCK_SIZE": 256,
+    }
+    signature = {}
+    for name in kernel.arg_names:
+        if name in constants:
+            continue
+        if name.endswith("_ptr"):
+            signature[name] = {"exp_avg_ptr": "*fp8e4nv", "exp_avg_sq_ptr": "*fp8e5"}.get(
+                name, "*fp32"
+            )
+        elif name == "n_elements":
+            signature[name] = "i32"
+        elif name in {"seed", "logical_offset"}:
+            signature[name] = "u32"
+        else:
+            signature[name] = "fp32"
+    result = triton.compile(
+        ASTSource(kernel, signature, constants),
+        target=GPUTarget("cuda", 90, 32),
+        options={"num_warps": 4},
+    )
+    assert result.asm["ptx"]
+    assert result.asm["cubin"]

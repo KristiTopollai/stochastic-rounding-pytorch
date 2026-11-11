@@ -1,106 +1,79 @@
-"""Readable PyTorch AdamW optimizers with low-precision state storage."""
+"""PyTorch AdamW with per-state storage formats."""
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-
-import torch
+import math
 
 from sr_states.reference.adamw import adamw_step_
-from sr_states.rounding import validate_rounding
 
 from ._state import StateOptimizer
 
 
+def validate_adamw(group):
+    for name in ("lr", "eps", "weight_decay"):
+        if not math.isfinite(group[name]) or group[name] < 0:
+            raise ValueError(f"invalid {name}: {group[name]}")
+    betas = group["betas"]
+    if len(betas) != 2 or any(not 0 <= beta < 1 for beta in betas):
+        raise ValueError(f"invalid beta values: {betas}")
+
+
 class AdamWReferenceSR(StateOptimizer):
-    """AdamW with FP32 arithmetic and FP32/BF16 moment-state storage."""
+    """AdamW with FP32 math and a configurable format for each moment."""
 
     _state_names = ("exp_avg", "exp_avg_sq")
+    _uses_step = True
     _update = staticmethod(adamw_step_.__wrapped__)
 
     def __init__(
         self,
-        params: Iterable[torch.Tensor],
-        lr: float = 1e-3,
-        betas: tuple[float, float] = (0.9, 0.999),
-        eps: float = 1e-8,
-        weight_decay: float = 1e-2,
+        params,
+        lr=1e-3,
+        betas=(0.9, 0.999),
+        eps=1e-8,
+        weight_decay=1e-2,
         *,
-        state_dtype: torch.dtype = torch.bfloat16,
-        rounding: str = "stochastic",
-        seed: int = 0,
-    ) -> None:
-        beta1, beta2 = betas
-        if lr < 0:
-            raise ValueError(f"invalid learning rate: {lr}")
-        if not 0 <= beta1 < 1 or not 0 <= beta2 < 1:
-            raise ValueError(f"invalid beta values: {betas}")
-        if eps < 0:
-            raise ValueError(f"invalid epsilon value: {eps}")
-        if weight_decay < 0:
-            raise ValueError(f"invalid weight_decay value: {weight_decay}")
-        validate_rounding(state_dtype, rounding)
-        defaults = {
-            "lr": lr,
-            "betas": betas,
-            "eps": eps,
-            "weight_decay": weight_decay,
-            "state_dtype": state_dtype,
-            "rounding": rounding,
-            "sr_seed": int(seed),
-            "sr_offset": 0,
-        }
-        super().__init__(params, defaults)
+        state_format=None,
+        state_dtype=None,
+        rounding=None,
+        seed=0,
+    ):
+        super().__init__(
+            params,
+            {"lr": lr, "betas": betas, "eps": eps, "weight_decay": weight_decay},
+            state_format=state_format,
+            state_dtype=state_dtype,
+            rounding=rounding,
+            seed=seed,
+        )
 
-    @torch.no_grad()
-    def step(self, closure=None):
-        loss = None
-        if closure is not None:
-            with torch.enable_grad():
-                loss = closure()
+    def _validate_group(self, group):
+        validate_adamw(group)
 
-        offset = self._next_offset()
-        for group in self.param_groups:
-            beta1, beta2 = group["betas"]
-            for parameter in group["params"]:
-                if parameter.grad is None:
-                    continue
-                if parameter.grad.is_sparse:
-                    raise RuntimeError("AdamWReferenceSR does not support sparse gradients")
-                state = self.state[parameter]
-                if not state:
-                    state["step"] = 0
-                    state["exp_avg"] = torch.zeros_like(
-                        parameter, dtype=group["state_dtype"], memory_format=torch.preserve_format
-                    )
-                    state["exp_avg_sq"] = torch.zeros_like(
-                        parameter, dtype=group["state_dtype"], memory_format=torch.preserve_format
-                    )
-                state["step"] += 1
-                self._update(
-                    parameter,
-                    parameter.grad,
-                    state["exp_avg"],
-                    state["exp_avg_sq"],
-                    lr=group["lr"],
-                    beta1=beta1,
-                    beta2=beta2,
-                    eps=group["eps"],
-                    weight_decay=group["weight_decay"],
-                    step=state["step"],
-                    state_dtype=group["state_dtype"],
-                    rounding=group["rounding"],
-                    seed=group["sr_seed"],
-                    offset=offset,
-                )
-                offset += 2 * parameter.numel()
-                group["sr_offset"] = offset
-        return loss
+    def _step_parameter(self, parameter, state, group, formats, step, offset):
+        beta1, beta2 = group["betas"]
+        self._update(
+            parameter,
+            parameter.grad,
+            state["exp_avg"],
+            state["exp_avg_sq"],
+            lr=group["lr"],
+            beta1=beta1,
+            beta2=beta2,
+            eps=group["eps"],
+            weight_decay=group["weight_decay"],
+            step=step,
+            formats=formats,
+            seed=group["sr_seed"],
+            offset=offset,
+        )
 
 
 class AdamWReferenceRN(AdamWReferenceSR):
-    """Deterministic BF16 round-to-nearest AdamW reference."""
+    """Deterministic round-to-nearest AdamW reference (BF16 by default).
 
-    def __init__(self, params, **kwargs) -> None:
-        kwargs["rounding"] = "nearest"
-        super().__init__(params, **kwargs)
+    Accepts the same storage options as ``AdamWReferenceSR``; they select only
+    each state's dtype, and every state uses nearest rounding.
+    """
+
+    _forced_rounding = "nearest"

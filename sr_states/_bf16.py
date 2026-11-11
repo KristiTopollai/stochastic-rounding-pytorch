@@ -12,40 +12,18 @@ from __future__ import annotations
 
 import torch
 
+from ._hash import _u32_hash
+
 _U32_MASK = 0xFFFFFFFF
 _BF16_MASK = 0xFFFF0000
 _EXPONENT_MASK = 0x7F800000
 _MANTISSA_MASK = 0x007FFFFF
 _BF16_QUIET_NAN_BIT = 0x00400000
-_HASH_MUL_1 = 0x7FEB352D
-_HASH_MUL_2 = 0x846CA68B
 
 
 def _require_fp32(x: torch.Tensor) -> None:
     if x.dtype != torch.float32:
         raise TypeError(f"expected torch.float32 input, got {x.dtype}")
-
-
-def _u32_hash(indices: torch.Tensor, seed: int) -> torch.Tensor:
-    """A stateless 32-bit integer hash shared with the Triton kernels.
-
-    Arithmetic is performed in int64 with a mask after each multiplication.
-    This avoids signed-int32 overflow differences across PyTorch backends while
-    retaining the modulo-2**32 semantics of the Triton uint32 implementation.
-    """
-
-    # Explicitly type scalar counters: under dynamic compilation Python integer
-    # arguments become SymInts, whose scalar arithmetic can otherwise be lowered
-    # as FP32 by Inductor before these bitwise operations.
-    seed_tensor = torch.scalar_tensor(
-        int(seed) % (1 << 32), dtype=torch.int64, device=indices.device
-    )
-    value = (indices.to(torch.int64) + seed_tensor) & _U32_MASK
-    value = value ^ (value >> 16)
-    value = (value * _HASH_MUL_1) & _U32_MASK
-    value = value ^ (value >> 15)
-    value = (value * _HASH_MUL_2) & _U32_MASK
-    return (value ^ (value >> 16)) & _U32_MASK
 
 
 def _fp32_to_u32(x: torch.Tensor) -> torch.Tensor:

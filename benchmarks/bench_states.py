@@ -1,4 +1,4 @@
-"""Matched in-place optimizer updates with BF16-SR, BF16-NR, and FP32 states."""
+"""Matched in-place optimizer updates with configurable state precision and rounding."""
 
 from __future__ import annotations
 
@@ -14,12 +14,19 @@ from benchmarks._utils import cuda_samples_ms, nonnegative_int, positive_int, ti
 from sr_states.compiled import compile_adamw_step_, compile_sgdm_step_
 from sr_states.reference.adamw import adamw_step_
 from sr_states.reference.sgd import sgdm_step_
+from sr_states.rounding import cast
 from sr_states.triton import is_triton_available, triton_adamw_step_, triton_sgdm_step_
 
 POLICIES = {
     "bf16_sr": (torch.bfloat16, "stochastic"),
     "bf16_nr": (torch.bfloat16, "nearest"),
     "fp32": (torch.float32, "nearest"),
+    "fp8e4_sr": (torch.float8_e4m3fn, "stochastic"),
+    "fp8e4_nr": (torch.float8_e4m3fn, "nearest"),
+    "fp8e5_sr": (torch.float8_e5m2, "stochastic"),
+    "fp8e5_nr": (torch.float8_e5m2, "nearest"),
+    "fp16_sr": (torch.float16, "stochastic"),
+    "fp16_nr": (torch.float16, "nearest"),
 }
 
 
@@ -43,6 +50,9 @@ def parse_args(argv=None, *, optimizer=None):
     parser.add_argument("--order-seed", type=int, default=0)
     parser.add_argument(
         "--step", type=positive_int, default=100, help="fixed AdamW bias-correction step"
+    )
+    parser.add_argument(
+        "--policies", nargs="+", choices=tuple(POLICIES), default=["bf16_sr", "bf16_nr", "fp32"]
     )
     parser.add_argument("--output")
     return parser.parse_args(argv)
@@ -119,20 +129,58 @@ class UpdateCase:
         self.run()
         offset = 0
         for actual, initial in zip(self.buffers, self.initial):
-            expected = [tensor.clone() for tensor in initial]
+            fp8 = self.state_dtype in (torch.float8_e4m3fn, torch.float8_e5m2)
+            expected = [
+                tensor.float().clone() if fp8 and index >= 2 else tensor.clone()
+                for index, tensor in enumerate(initial)
+            ]
             self.reference(
                 *expected,
                 **self.options,
                 rounding=self.rounding,
-                state_dtype=self.state_dtype,
+                state_dtype=torch.float32 if fp8 else self.state_dtype,
                 offset=offset,
             )
+            if fp8:
+                # Fused arithmetic can land on the other side of an FP8
+                # midpoint from eager mul/add. Check the FP32 recurrence first,
+                # then require exact rounding of the backend's own proposal.
+                proposals = [
+                    tensor.float().clone() if index >= 2 else tensor.clone()
+                    for index, tensor in enumerate(initial)
+                ]
+                options = {**self.options, "rounding": "nearest", "offset": offset}
+                if self.triton:
+                    options["block_size"] = self.block_size
+                else:
+                    options["state_dtype"] = torch.float32
+                self.function(*proposals, **options)
+                for proposal, target in zip(proposals[2:], expected[2:]):
+                    torch.testing.assert_close(proposal, target, rtol=1e-5, atol=1e-6)
             for index, (result, target) in enumerate(zip(actual, expected)):
                 if index == 1:
                     torch.testing.assert_close(result, target, rtol=0, atol=0)
+                elif fp8 and index >= 2:
+                    stored = cast(
+                        proposals[index],
+                        dtype=result.dtype,
+                        rounding=self.rounding,
+                        seed=self.options["seed"],
+                        offset=offset + (index - 2) * result.numel(),
+                    )
+                    torch.testing.assert_close(
+                        result.view(torch.uint8), stored.view(torch.uint8), rtol=0, atol=0
+                    )
                 else:
-                    tolerance = 8e-3 if result.dtype == torch.bfloat16 else 1e-5
-                    torch.testing.assert_close(result, target, rtol=tolerance, atol=1e-6)
+                    tolerance = {
+                        torch.bfloat16: 8e-3,
+                        torch.float16: 1e-3,
+                        torch.float8_e4m3fn: 0.13,
+                        torch.float8_e5m2: 0.26,
+                    }.get(result.dtype, 1e-5)
+                    torch.testing.assert_close(
+                        result.float(), target.float(), rtol=tolerance, atol=1e-6
+                    )
             offset += (len(actual) - 2) * actual[0].numel()
         self.reset()
 
@@ -184,7 +232,9 @@ def main(argv=None, *, optimizer=None):
     for n in args.sizes:
         inputs = prepare_inputs(args.optimizer, n, count=args.tensors, dtype=dtype, device="cuda")
         methods = [
-            (backend, policy) for backend in ("eager", "compiled", "triton") for policy in POLICIES
+            (backend, policy)
+            for backend in ("eager", "compiled", "triton")
+            for policy in args.policies
         ]
         order.shuffle(methods)
         for backend, policy in methods:
