@@ -1,9 +1,11 @@
 import copy
+from functools import partial
 
 import pytest
 import torch
 
 from benchmarks.bench_states import POLICIES, build_case, prepare_inputs, update_options
+from sr_states import StateFormat
 from sr_states.compiled import compile_adamw_step_, compile_sgdm_step_
 from sr_states.reference.adamw import adamw_step_
 from sr_states.reference.rounding import stochastic_round_bf16
@@ -22,6 +24,15 @@ pytestmark = [
 ]
 
 
+def require_policy(policy):
+    dtype, _ = POLICIES[policy]
+    if dtype in (torch.float8_e4m3fn, torch.float8_e5m2) and torch.cuda.get_device_capability() < (
+        8,
+        9,
+    ):
+        pytest.skip("requires sm_89 FP8 storage")
+
+
 def step_function(kind):
     return triton_adamw_step_ if kind == "adamw" else triton_sgdm_step_
 
@@ -31,8 +42,40 @@ def step_function(kind):
 @pytest.mark.parametrize("policy", list(POLICIES))
 @pytest.mark.parametrize("n", [0, 1, 1003])
 def test_fused_update_matches_reference(kind, parameter_dtype, policy, n):
+    require_policy(policy)
     inputs = prepare_inputs(kind, n, count=1, dtype=parameter_dtype, device="cuda")
     case = build_case(inputs, optimizer=kind, backend="triton", policy=policy, step=1)
+    case.validate()
+
+
+@pytest.mark.parametrize("parameter_dtype", [torch.float32, torch.bfloat16])
+@pytest.mark.parametrize("n", [1, 1003])
+@pytest.mark.parametrize("fusion", [False, True])
+def test_fp8_sgdm_fused_subnormal_boundary(parameter_dtype, n, fusion, monkeypatch):
+    require_policy("fp8e4_nr")
+    from sr_states.triton.sgd import _fused_sgdm_kernel
+
+    monkeypatch.setattr(
+        _fused_sgdm_kernel, "run", partial(_fused_sgdm_kernel.run, enable_fp_fusion=fusion)
+    )
+    signs = (1 - 2 * (torch.arange(n, device="cuda") % 2)).float()
+    inputs = [
+        (
+            torch.ones(n, device="cuda", dtype=parameter_dtype),
+            (-signs * (8 / 512)).to(parameter_dtype),
+            signs * (15 / 512),
+        )
+    ]
+    case = build_case(inputs, optimizer="sgdm", backend="triton", policy="fp8e4_nr")
+    case.run()
+    stored = case.buffers[0][2].float()
+    if fusion:
+        # Enabling fusion permits FMA; it does not require the compiler to use it.
+        assert torch.all((stored == signs * (5 / 512)) | (stored == signs * (6 / 512)))
+    else:
+        # Separate FP32 mul/add lands on the tie, which rounds to even (6/512).
+        assert torch.equal(stored, signs * (6 / 512))
+    # Still require exact storage rounding of this backend's FP32 proposal.
     case.validate()
 
 
@@ -71,6 +114,7 @@ def test_multistep_rounds_only_state_writeback(kind, parameter_dtype, rounding):
 @pytest.mark.parametrize("kind", ["sgdm", "adamw"])
 @pytest.mark.parametrize("policy", list(POLICIES))
 def test_state_kernel_block_invariance(kind, policy):
+    require_policy(policy)
     inputs = prepare_inputs(kind, 4099, count=1, dtype=torch.float32, device="cuda")
     outputs = []
     for block_size in (128, 256, 512, 1024):
@@ -81,7 +125,7 @@ def test_state_kernel_block_invariance(kind, policy):
         outputs.append(case.buffers[0])
     for tensors in outputs[1:]:
         for tensor, expected in zip(tensors, outputs[0]):
-            assert torch.equal(tensor, expected)
+            assert torch.equal(tensor.view(torch.uint8), expected.view(torch.uint8))
 
 
 @pytest.mark.parametrize("optimizer_class", [SGDMTriton, AdamWTriton])
@@ -110,10 +154,12 @@ def test_gpu_checkpoint_resumes_identically(optimizer_class, state_dtype, parame
 @pytest.mark.parametrize("kind", ["sgdm", "adamw"])
 def test_inductor_complete_updates(kind):
     compiler = compile_adamw_step_ if kind == "adamw" else compile_sgdm_step_
-    compiled = compiler(fullgraph=True, dynamic=True, options={"triton.cudagraphs": False})
-    for n in (257, 1003):
-        inputs = prepare_inputs(kind, n, count=2, dtype=torch.float32, device="cuda")
-        for policy in POLICIES:
+    for policy in POLICIES:
+        require_policy(policy)
+        torch._dynamo.reset()
+        compiled = compiler(fullgraph=True, dynamic=True, options={"triton.cudagraphs": False})
+        for n in (257, 1003):
+            inputs = prepare_inputs(kind, n, count=2, dtype=torch.float32, device="cuda")
             build_case(
                 inputs, optimizer=kind, backend="compiled", policy=policy, compiled=compiled
             ).validate()
@@ -145,8 +191,13 @@ def test_state_validation_and_disjoint_buffers(kind):
     if kind == "adamw":
         with pytest.raises(ValueError, match="positive integer"):
             function(*tensors, **{**options, "step": 0})
-        with pytest.raises(TypeError, match="same dtype"):
-            function(*tensors[:-1], tensors[-1].bfloat16(), **options)
+        with pytest.raises(ValueError, match="state dtype"):
+            function(
+                *tensors[:-1],
+                tensors[-1].bfloat16(),
+                formats=(StateFormat(torch.float32), StateFormat(torch.float32)),
+                **options,
+            )
 
 
 @pytest.mark.parametrize("kind", ["sgdm", "adamw"])

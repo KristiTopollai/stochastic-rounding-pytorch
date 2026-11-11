@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sr-states"
 version = "0.1.0"
-description = "FP32-to-BF16 stochastic rounding and BF16 optimizer states in PyTorch and Triton"
+description = "Stochastic BF16, FP16 and FP8 optimizer-state storage in PyTorch and Triton"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{name = "SR-States contributors"}]
 dependencies = ["torch>=2.5"]
-keywords = ["stochastic-rounding", "bfloat16", "pytorch", "triton", "optimizers"]
+keywords = ["stochastic-rounding", "bfloat16", "fp8", "float8", "pytorch", "triton", "optimizers"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Programming Language :: Python :: 3",

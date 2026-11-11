@@ -9,7 +9,9 @@ build/
 dist/
 *.egg-info/
 tmp/
-results/raw/
+/results/
 profiles/**/*.ncu-rep
 profiles/**/*.nsys-rep
 
+/docs/
+/HISTORY.md

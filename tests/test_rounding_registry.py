@@ -60,7 +60,10 @@ def test_custom_rounding_changes_state_only_and_resumes(cls):
     restored_p = torch.nn.Parameter(p.detach().clone())
     restored = cls([restored_p], lr=0.7, **options)
     checkpoint = copy.deepcopy(custom.state_dict())
-    assert checkpoint["param_groups"][0]["rounding"] == "toward_zero"
+    assert (
+        checkpoint["param_groups"][0]["state_format"][custom._state_names[0]]["rounding"]
+        == "toward_zero"
+    )
     restored.load_state_dict(checkpoint)
     for step in range(3):
         p.grad = restored_p.grad = torch.sin(torch.arange(17) + step)
@@ -73,9 +76,9 @@ def test_custom_rounding_changes_state_only_and_resumes(cls):
 
 @pytest.mark.parametrize("cls", [SGDMReferenceSR, AdamWReferenceSR])
 def test_register_new_storage_dtype_without_optimizer_changes(cls):
-    register_rounding("nearest", torch.float16, reference=nearest)
+    register_rounding("custom_nearest", torch.float16, reference=nearest)
     p = torch.nn.Parameter(torch.ones(17))
-    optimizer = cls([p], lr=0.01, state_dtype=torch.float16, rounding="nearest")
+    optimizer = cls([p], lr=0.01, state_dtype=torch.float16, rounding="custom_nearest")
     p.grad = torch.linspace(-0.9, 0.9, 17)
     optimizer.step()
     assert all(optimizer.state[p][name].dtype == torch.float16 for name in optimizer._state_names)
@@ -100,13 +103,15 @@ def test_group_overrides_and_checkpoint_require_registration(cls):
         )
     assert len(optimizer.param_groups) == 1
     checkpoint = copy.deepcopy(optimizer.state_dict())
-    checkpoint["param_groups"][0]["rounding"] = "missing"
+    checkpoint["param_groups"][0]["state_format"][cls._state_names[0]]["rounding"] = "missing"
     with pytest.raises(ValueError, match="rounding"):
         optimizer.load_state_dict(checkpoint)
-    assert optimizer.param_groups[0]["rounding"] == "stochastic"
+    assert (
+        optimizer.param_groups[0]["state_format"][cls._state_names[0]]["rounding"] == "stochastic"
+    )
 
 
-def test_registration_validation_and_no_fp8_builtins():
+def test_registration_validation_and_minifloat_builtins():
     with pytest.raises(ValueError, match="already registered"):
         register_rounding("nearest", torch.bfloat16, reference=nearest)
     with pytest.raises(ValueError, match="nonempty"):
@@ -115,9 +120,11 @@ def test_registration_validation_and_no_fp8_builtins():
         register_rounding("rule", torch.int32, reference=nearest)
     with pytest.raises(TypeError, match="callable"):
         register_rounding("rule", torch.bfloat16, reference=None)
-    for dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
-        with pytest.raises(ValueError, match="registered"):
-            cast(torch.ones(1), dtype=dtype)
+    for dtype in (torch.float8_e4m3fn, torch.float8_e5m2, torch.float16):
+        for mode in ("nearest", "stochastic"):
+            assert cast(torch.ones(1), dtype=dtype, rounding=mode).dtype == dtype
+            with pytest.raises(ValueError, match="already registered"):
+                register_rounding(mode, dtype, reference=nearest)
     with pytest.raises(ValueError, match="backend"):
         validate_rounding(torch.bfloat16, "nearest", backend="unknown")
 
@@ -160,5 +167,9 @@ def test_triton_host_dispatch_passes_registered_callback(monkeypatch, kind, cls)
     optimizer.step()
     optimizer.step()
     assert len(launches) == 2
-    assert all(kwargs["ROUND"] is jit_callback for _, kwargs in launches)
+    assert all(
+        kwargs[key] is jit_callback
+        for _, kwargs in launches
+        for key in (("ROUND",) if kind == "sgd" else ("ROUND_M", "ROUND_V"))
+    )
     assert optimizer.param_groups[0]["sr_offset"] == 2 * len(optimizer._state_names) * p.numel()

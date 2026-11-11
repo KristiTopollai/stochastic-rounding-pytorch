@@ -1,15 +1,14 @@
-"""Fused AdamW with FP32 arithmetic and stochastic BF16 moment storage."""
+"""Fused AdamW with FP32 arithmetic and independent moment storage formats."""
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-
 import torch
 
-from sr_states.optim._state import StateOptimizer
+from sr_states.formats import StateFormat, resolve_formats
+from sr_states.optim.adamw import AdamWReferenceSR
 from sr_states.rounding import get_triton_rounding
 
-from ._common import require_triton, tl, triton
+from ._common import require_triton, tl, triton, validate_fp8_device
 from ._optimizer import nonnegative, validate_options, validate_tensors
 
 if triton is not None:
@@ -31,7 +30,8 @@ if triton is not None:
         eps,
         seed,
         logical_offset,
-        ROUND: tl.constexpr,
+        ROUND_M: tl.constexpr,
+        ROUND_V: tl.constexpr,
         BLOCK_SIZE: tl.constexpr,
     ):
         indices = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
@@ -48,8 +48,8 @@ if triton is not None:
         counter = (
             indices.to(tl.uint32) + tl.cast(seed, tl.uint32) + tl.cast(logical_offset, tl.uint32)
         )
-        stored_m = ROUND(updated_m, counter, exp_avg_ptr.dtype.element_ty)
-        stored_v = ROUND(
+        stored_m = ROUND_M(updated_m, counter, exp_avg_ptr.dtype.element_ty)
+        stored_v = ROUND_V(
             updated_v, counter + tl.cast(n_elements, tl.uint32), exp_avg_sq_ptr.dtype.element_ty
         )
         tl.store(parameter_ptr + indices, updated_parameter, mask=mask)
@@ -72,22 +72,35 @@ def triton_adamw_step_(
     step: int,
     seed: int = 0,
     offset: int = 0,
-    rounding: str = "stochastic",
+    rounding: str | None = None,
+    formats: tuple | dict | None = None,
     block_size: int = 256,
 ) -> None:
-    """Update parameter and moments in place; SR applies only to BF16 moments.
+    """Update parameter and moments in place; each moment uses its resolved storage format.
 
     Inputs must be contiguous, disjoint CUDA tensors with identical shapes.
-    Parameters and gradients may be FP32 or BF16. Both moments must share an
-    FP32 or BF16 dtype. The parameter update uses the unrounded FP32 moments.
+    Parameters and gradients may be FP32 or BF16. Moments may use different registered storage dtypes. The parameter update uses the unrounded FP32 moments.
     ``step`` starts at one; the two moments use consecutive RNG counter ranges.
     """
     require_triton()
-    validate_options(rounding, block_size, exp_avg.dtype)
+    if formats is None:
+        formats = (
+            StateFormat(exp_avg.dtype, "stochastic" if rounding is None else rounding),
+            StateFormat(exp_avg_sq.dtype, "stochastic" if rounding is None else rounding),
+        )
+        rounding = None
+    resolved = resolve_formats(
+        ("exp_avg", "exp_avg_sq"), formats, rounding=rounding, backend="triton"
+    )
+    for state, fmt in zip((exp_avg, exp_avg_sq), resolved):
+        validate_options(fmt.rounding, block_size, fmt.dtype)
+        if state.dtype != fmt.dtype:
+            raise ValueError("state dtype does not match its state format")
     _validate_hyperparameters(lr, (beta1, beta2), eps, weight_decay)
     if not isinstance(step, int) or isinstance(step, bool) or step < 1:
         raise ValueError("step must be a positive integer")
     validate_tensors(parameter, gradient, exp_avg, exp_avg_sq)
+    validate_fp8_device(parameter.device, *(fmt.dtype for fmt in resolved))
     if parameter.numel() == 0:
         return
     with torch.cuda.device(parameter.device):
@@ -107,7 +120,8 @@ def triton_adamw_step_(
             eps,
             int(seed) & 0xFFFFFFFF,
             int(offset) & 0xFFFFFFFF,
-            ROUND=get_triton_rounding(exp_avg.dtype, rounding),
+            ROUND_M=get_triton_rounding(resolved[0].dtype, resolved[0].rounding),
+            ROUND_V=get_triton_rounding(resolved[1].dtype, resolved[1].rounding),
             BLOCK_SIZE=block_size,
             num_warps=4,
         )
@@ -121,83 +135,65 @@ def _validate_hyperparameters(lr, betas, eps, weight_decay):
         raise ValueError(f"invalid beta values: {betas}")
 
 
-class AdamWTriton(StateOptimizer):
-    """AdamW with fused state writes, using BF16 stochastic storage by default.
+class AdamWTriton(AdamWReferenceSR):
+    """Fused AdamW with FP32 arithmetic and independently configured moments."""
 
-    Parameters retain their dtype. FP32 state storage and BF16 nearest rounding
-    are available as baselines. AMSGrad and sparse gradients are unsupported.
-    """
-
-    _state_names = ("exp_avg", "exp_avg_sq")
     _rounding_backend = "triton"
 
     def __init__(
         self,
-        params: Iterable[torch.Tensor],
-        lr: float = 1e-3,
-        betas: tuple[float, float] = (0.9, 0.999),
-        eps: float = 1e-8,
-        weight_decay: float = 1e-2,
+        params,
+        lr=1e-3,
+        betas=(0.9, 0.999),
+        eps=1e-8,
+        weight_decay=1e-2,
         *,
-        state_dtype: torch.dtype = torch.bfloat16,
-        rounding: str = "stochastic",
-        seed: int = 0,
-        block_size: int = 256,
-    ) -> None:
-        _validate_hyperparameters(lr, betas, eps, weight_decay)
-        validate_options(rounding, block_size, state_dtype)
+        state_format=None,
+        state_dtype=None,
+        rounding=None,
+        seed=0,
+        block_size=256,
+    ):
+        self._initial_block_size = block_size
         super().__init__(
             params,
-            {
-                "lr": lr,
-                "betas": betas,
-                "eps": eps,
-                "weight_decay": weight_decay,
-                "state_dtype": state_dtype,
-                "rounding": rounding,
-                "sr_seed": int(seed),
-                "sr_offset": 0,
-                "block_size": block_size,
-            },
+            lr=lr,
+            betas=betas,
+            eps=eps,
+            weight_decay=weight_decay,
+            state_format=state_format,
+            state_dtype=state_dtype,
+            rounding=rounding,
+            seed=seed,
+        )
+        self.defaults["block_size"] = block_size
+
+    def _validate_group(self, group):
+        super()._validate_group(group)
+        validate_options(
+            "nearest", group.get("block_size", self._initial_block_size), torch.float32
         )
 
-    @torch.no_grad()
-    def step(self, closure=None):
-        loss = None
-        if closure is not None:
-            with torch.enable_grad():
-                loss = closure()
-        offset = self._next_offset()
-        for group in self.param_groups:
-            beta1, beta2 = group["betas"]
-            for parameter in group["params"]:
-                if parameter.grad is None:
-                    continue
-                if parameter.grad.is_sparse:
-                    raise RuntimeError("AdamWTriton does not support sparse gradients")
-                state = self.state[parameter]
-                if not state:
-                    state["step"] = 0
-                    for name in self._state_names:
-                        state[name] = torch.zeros_like(parameter, dtype=group["state_dtype"])
-                next_step = state["step"] + 1
-                triton_adamw_step_(
-                    parameter,
-                    parameter.grad,
-                    state["exp_avg"],
-                    state["exp_avg_sq"],
-                    lr=group["lr"],
-                    beta1=beta1,
-                    beta2=beta2,
-                    eps=group["eps"],
-                    weight_decay=group["weight_decay"],
-                    step=next_step,
-                    rounding=group["rounding"],
-                    seed=group["sr_seed"],
-                    offset=offset,
-                    block_size=group["block_size"],
-                )
-                state["step"] = next_step
-                offset += 2 * parameter.numel()
-                group["sr_offset"] = offset
-        return loss
+    def add_param_group(self, param_group):
+        super().add_param_group(
+            {"block_size": self.defaults.get("block_size", self._initial_block_size), **param_group}
+        )
+
+    def _step_parameter(self, parameter, state, group, formats, step, offset):
+        beta1, beta2 = group["betas"]
+        triton_adamw_step_(
+            parameter,
+            parameter.grad,
+            state["exp_avg"],
+            state["exp_avg_sq"],
+            lr=group["lr"],
+            beta1=beta1,
+            beta2=beta2,
+            eps=group["eps"],
+            weight_decay=group["weight_decay"],
+            step=step,
+            formats=formats,
+            seed=group["sr_seed"],
+            offset=offset,
+            block_size=group["block_size"],
+        )

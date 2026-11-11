@@ -1,15 +1,14 @@
-"""Fused Triton momentum-SGD with stochastic BF16 state write-back."""
+"""Fused Triton momentum SGD with configurable state storage."""
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-
 import torch
 
-from sr_states.optim._state import StateOptimizer
+from sr_states.formats import StateFormat, resolve_formats
+from sr_states.optim.sgd import SGDMReferenceSR
 from sr_states.rounding import get_triton_rounding
 
-from ._common import require_triton, tl, triton
+from ._common import require_triton, tl, triton, validate_fp8_device
 from ._optimizer import nonnegative, validate_options, validate_tensors
 
 if triton is not None:
@@ -57,25 +56,34 @@ def triton_sgdm_step_(
     momentum_factor: float,
     seed: int,
     offset: int = 0,
-    rounding: str = "stochastic",
+    rounding: str | None = None,
+    formats: tuple | dict | None = None,
     block_size: int = 256,
 ) -> None:
     """Apply one fused momentum-SGD update in place.
 
     ``parameter``, ``gradient``, and ``momentum`` must be same-shaped,
     contiguous CUDA tensors on one device. Parameter and gradient storage may
-    be FP32 or BF16; momentum storage may be FP32 or BF16. Arithmetic is performed in FP32.
+    be FP32 or BF16; momentum uses any registered Triton storage format. Arithmetic is performed in FP32.
 
     The function mutates ``parameter`` and ``momentum`` and returns ``None``.
     ``offset`` is the logical starting index for counter-based randomness.
     """
 
     require_triton()
-    validate_options(rounding, block_size, momentum.dtype)
+    if formats is None:
+        formats = (StateFormat(momentum.dtype, "stochastic" if rounding is None else rounding),)
+        rounding = None
+    resolved = resolve_formats(("momentum_buffer",), formats, rounding=rounding, backend="triton")
+    fmt = resolved[0]
+    validate_options(fmt.rounding, block_size, fmt.dtype)
+    if momentum.dtype != fmt.dtype:
+        raise ValueError("state dtype does not match its state format")
     nonnegative("learning rate", lr)
     if not 0 <= momentum_factor < 1:
         raise ValueError(f"invalid momentum value: {momentum_factor}")
     validate_tensors(parameter, gradient, momentum)
+    validate_fp8_device(parameter.device, *(fmt.dtype for fmt in resolved))
     if parameter.numel() == 0:
         return
 
@@ -90,83 +98,61 @@ def triton_sgdm_step_(
             momentum_factor,
             seed=int(seed) & 0xFFFFFFFF,
             logical_offset=int(offset) & 0xFFFFFFFF,
-            ROUND=get_triton_rounding(momentum.dtype, rounding),
+            ROUND=get_triton_rounding(fmt.dtype, fmt.rounding),
             BLOCK_SIZE=block_size,
             num_warps=4,
         )
 
 
-class SGDMTriton(StateOptimizer):
-    """Momentum SGD backed by the fused Triton BF16-state kernel.
+class SGDMTriton(SGDMReferenceSR):
+    """Fused momentum SGD with configurable state storage and checkpointed RNG."""
 
-    The seed and logical RNG offset live in each parameter group, so the
-    standard optimizer ``state_dict`` contains everything needed to reproduce
-    the next stochastic update after checkpoint restore.
-    """
-
-    _state_names = ("momentum_buffer",)
     _rounding_backend = "triton"
 
     def __init__(
         self,
-        params: Iterable[torch.Tensor],
-        lr: float,
-        momentum: float = 0.9,
+        params,
+        lr,
+        momentum=0.9,
         *,
-        state_dtype: torch.dtype = torch.bfloat16,
-        rounding: str = "stochastic",
-        seed: int = 0,
-        block_size: int = 256,
-    ) -> None:
-        nonnegative("learning rate", lr)
-        if not 0 <= momentum < 1:
-            raise ValueError(f"invalid momentum value: {momentum}")
-        validate_options(rounding, block_size, state_dtype)
+        state_format=None,
+        state_dtype=None,
+        rounding=None,
+        seed=0,
+        block_size=256,
+    ):
+        self._initial_block_size = block_size
+        super().__init__(
+            params,
+            lr=lr,
+            momentum=momentum,
+            state_format=state_format,
+            state_dtype=state_dtype,
+            rounding=rounding,
+            seed=seed,
+        )
+        self.defaults["block_size"] = block_size
 
-        defaults = {
-            "lr": lr,
-            "momentum": momentum,
-            "state_dtype": state_dtype,
-            "rounding": rounding,
-            "sr_seed": int(seed),
-            "sr_offset": 0,
-            "block_size": block_size,
-        }
-        super().__init__(params, defaults)
+    def _validate_group(self, group):
+        super()._validate_group(group)
+        validate_options(
+            "nearest", group.get("block_size", self._initial_block_size), torch.float32
+        )
 
-    @torch.no_grad()
-    def step(self, closure=None):
-        loss = None
-        if closure is not None:
-            with torch.enable_grad():
-                loss = closure()
+    def add_param_group(self, param_group):
+        super().add_param_group(
+            {"block_size": self.defaults.get("block_size", self._initial_block_size), **param_group}
+        )
 
-        offset = self._next_offset()
-        for group in self.param_groups:
-            for parameter in group["params"]:
-                if parameter.grad is None:
-                    continue
-                if parameter.grad.is_sparse:
-                    raise RuntimeError("SGDMTriton does not support sparse gradients")
-
-                state = self.state[parameter]
-                if "momentum_buffer" not in state:
-                    state["momentum_buffer"] = torch.zeros_like(
-                        parameter,
-                        dtype=group.get("state_dtype", torch.bfloat16),
-                        memory_format=torch.preserve_format,
-                    )
-                triton_sgdm_step_(
-                    parameter,
-                    parameter.grad,
-                    state["momentum_buffer"],
-                    lr=group["lr"],
-                    momentum_factor=group["momentum"],
-                    seed=group["sr_seed"],
-                    offset=offset,
-                    rounding=group["rounding"],
-                    block_size=group["block_size"],
-                )
-                offset += parameter.numel()
-                group["sr_offset"] = offset
-        return loss
+    def _step_parameter(self, parameter, state, group, formats, step, offset):
+        triton_sgdm_step_(
+            parameter,
+            parameter.grad,
+            state["momentum_buffer"],
+            lr=group["lr"],
+            momentum_factor=group["momentum"],
+            formats=formats,
+            seed=group["sr_seed"],
+            offset=offset,
+            block_size=group["block_size"],
+        )

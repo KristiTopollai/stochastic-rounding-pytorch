@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import torch
 
-from sr_states.rounding import cast, validate_rounding
+from sr_states.formats import resolve_formats
+from sr_states.rounding import cast
 
 
 def sgdm_step(
@@ -14,19 +15,24 @@ def sgdm_step(
     *,
     lr: float,
     momentum_factor: float,
-    state_dtype: torch.dtype = torch.bfloat16,
-    rounding: str = "stochastic",
+    state_dtype: torch.dtype | None = None,
+    formats: tuple | dict | None = None,
+    rounding: str | None = None,
     seed: int = 0,
     offset: int = 0,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Return one SGDM update, computing all arithmetic in FP32."""
 
-    validate_rounding(state_dtype, rounding)
+    resolved = resolve_formats(
+        ("momentum_buffer",), formats, state_dtype=state_dtype, rounding=rounding
+    )
 
     p32 = parameter.float()
     u32 = momentum.float().mul(momentum_factor).add(gradient.float())
     updated_parameter = p32.add(u32, alpha=-lr).to(parameter.dtype)
-    stored_momentum = cast(u32, dtype=state_dtype, rounding=rounding, seed=seed, offset=offset)
+    stored_momentum = cast(
+        u32, dtype=resolved[0].dtype, rounding=resolved[0].rounding, seed=seed, offset=offset
+    )
     return updated_parameter, stored_momentum
 
 

@@ -277,7 +277,7 @@ def make_row(case, samples, *, workload, args):
         "shapes": json.dumps([list(p.shape) for p in case.problem.parameters]),
         "parameter_dtype": "fp32",
         "state_dtype": "bf16",
-        "rounding": case.optimizer.param_groups[0]["rounding"],
+        "rounding": next(iter(case.optimizer.param_groups[0]["state_format"].values()))["rounding"],
         "timing": "optimizer_step_synchronized_wall",
         **summarize(samples["wall"]),
         **{f"cuda_{key}": value for key, value in summarize(samples["cuda"]).items()},
