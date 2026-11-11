@@ -62,13 +62,6 @@ A single `state_format=StateFormat(torch.float16)` applies to every state.
 Use either `state_format` or the `state_dtype`/`rounding` shorthand.
 Triton FP8 requires **sm_89+**. BF16 remains the default for all states.
 
-**FP8 storage is unscaled and can underflow as well as overflow.** Small state
-updates may round to zero. This is especially dangerous for AdamW's second
-moment: tiny squared gradients can leave its stored value at zero, producing
-large parameter updates through the small denominator. Keep `exp_avg_sq` in
-BF16 or FP32 for small gradients. FP8 first moments can also underflow and add
-substantial noise; the example is an experiment, not a general training default.
-Stochastic rounding does not provide scaling or ensure each tiny update survives.
 
 ## Standalone casts
 
