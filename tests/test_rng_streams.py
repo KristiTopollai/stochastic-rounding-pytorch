@@ -248,8 +248,11 @@ def test_compiled_optimizer_reuses_graph_across_rng_steps(adamw, backend):
     graphs = []
 
     def count_graph(graph, inputs):
+        # Inductor may restart the initial trace to specialize fixed floats.
+        # Count the compiled callable only after the backend returns it.
+        update = torch._dynamo.lookup_backend(backend)(graph, inputs)
         graphs.append(graph)
-        return torch._dynamo.lookup_backend(backend)(graph, inputs)
+        return update
 
     g = gradient()
     p, q = (torch.nn.Parameter(torch.ones_like(g)) for _ in range(2))
