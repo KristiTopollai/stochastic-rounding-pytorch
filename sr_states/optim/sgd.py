@@ -46,7 +46,7 @@ class SGDMReferenceSR(StateOptimizer):
     def _validate_group(self, group):
         validate_sgdm(group)
 
-    def _step_parameter(self, parameter, state, group, formats, step, offset):
+    def _step_parameter(self, parameter, state, group, formats, step, seed, offset):
         self._update(
             parameter,
             parameter.grad,
@@ -54,7 +54,7 @@ class SGDMReferenceSR(StateOptimizer):
             lr=group["lr"],
             momentum_factor=group["momentum"],
             formats=formats,
-            seed=group["sr_seed"],
+            seed=seed,
             offset=offset,
         )
 

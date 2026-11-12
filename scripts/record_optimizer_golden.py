@@ -1,4 +1,4 @@
-"""Record the pre-refactor optimizer contract; run from public main 393c527.
+"""Record the RNG-free pre-refactor optimizer contract; run from public main 393c527.
 
 CPU: python scripts/record_optimizer_golden.py --output tests/golden/optimizer_v01.pt
 GPU: python scripts/record_optimizer_golden.py --device cuda --output GPU_OUTPUT.pt
@@ -28,7 +28,6 @@ def collect(device="cpu"):
         for policy, dtype, rounding in [
             ("fp32", torch.float32, "nearest"),
             ("bf16_rn", torch.bfloat16, "nearest"),
-            ("bf16_sr", torch.bfloat16, "stochastic"),
         ]:
             for pdtype in (torch.float32, torch.bfloat16):
                 torch._dynamo.reset()
@@ -47,8 +46,6 @@ def collect(device="cpu"):
                     seed=2**32 - 13,
                     **options,
                 )
-                for group in optimizer.param_groups:
-                    group["sr_offset"] = 2**32 - 23
                 for step in range(7):
                     for i, p in enumerate(params):
                         p.grad = (
@@ -71,7 +68,6 @@ def collect(device="cpu"):
                         }
                         for p in params
                     ],
-                    "offsets": [g["sr_offset"] for g in optimizer.param_groups],
                 }
     return cases
 

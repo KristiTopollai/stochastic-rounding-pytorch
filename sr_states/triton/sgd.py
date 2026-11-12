@@ -12,6 +12,7 @@ from ._common import require_triton, tl, triton, validate_fp8_device
 from ._optimizer import nonnegative, validate_options, validate_tensors
 
 if triton is not None:
+    from .sr_cast import _u32_hash
 
     @triton.jit
     def _fused_sgdm_kernel(
@@ -38,7 +39,9 @@ if triton is not None:
         updated_parameter = parameter - learning_rate * updated_momentum
 
         counter = (
-            offsets.to(tl.uint32) + tl.cast(seed, tl.uint32) + tl.cast(logical_offset, tl.uint32)
+            offsets.to(tl.uint32)
+            + _u32_hash(tl.cast(seed, tl.uint32))
+            + tl.cast(logical_offset, tl.uint32)
         )
         stored_momentum = ROUND(updated_momentum, counter, momentum_ptr.dtype.element_ty)
 
@@ -67,7 +70,8 @@ def triton_sgdm_step_(
     be FP32 or BF16; momentum uses any registered Triton storage format. Arithmetic is performed in FP32.
 
     The function mutates ``parameter`` and ``momentum`` and returns ``None``.
-    ``offset`` is the logical starting index for counter-based randomness.
+    The momentum state derives its counter base from the update key ``seed``.
+    ``offset`` is the flat starting index of this shard.
     """
 
     require_triton()
@@ -144,7 +148,7 @@ class SGDMTriton(SGDMReferenceSR):
             {"block_size": self.defaults.get("block_size", self._initial_block_size), **param_group}
         )
 
-    def _step_parameter(self, parameter, state, group, formats, step, offset):
+    def _step_parameter(self, parameter, state, group, formats, step, seed, offset):
         triton_sgdm_step_(
             parameter,
             parameter.grad,
@@ -152,7 +156,7 @@ class SGDMTriton(SGDMReferenceSR):
             lr=group["lr"],
             momentum_factor=group["momentum"],
             formats=formats,
-            seed=group["sr_seed"],
+            seed=seed,
             offset=offset,
             block_size=group["block_size"],
         )

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import torch
 
 from benchmarks._utils import cuda_samples_ms, nonnegative_int, positive_int, timing_row, write_rows
+from sr_states._hash import state_key
 from sr_states.compiled import compile_adamw_step_, compile_sgdm_step_
 from sr_states.reference.adamw import adamw_step_
 from sr_states.reference.sgd import sgdm_step_
@@ -165,8 +166,8 @@ class UpdateCase:
                         proposals[index],
                         dtype=result.dtype,
                         rounding=self.rounding,
-                        seed=self.options["seed"],
-                        offset=offset + (index - 2) * result.numel(),
+                        seed=state_key(self.options["seed"], index - 2),
+                        offset=offset,
                     )
                     torch.testing.assert_close(
                         result.view(torch.uint8), stored.view(torch.uint8), rtol=0, atol=0

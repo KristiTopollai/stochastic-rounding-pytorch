@@ -45,7 +45,7 @@ def test_triton_checkpoint_preserves_bf16_state_on_cpu(source_dtype, target_dtyp
     optimizer = SGDMTriton([{"params": [source]}, {"params": [unused]}], lr=0.1, seed=44)
     buffer = torch.tensor([0.0, -0.0, 1.0078125, -0.50390625], dtype=torch.bfloat16)
     optimizer.state[source]["momentum_buffer"] = buffer.clone()
-    optimizer.param_groups[0]["sr_offset"] = 2**32 + 17
+    optimizer.param_groups[0]["sr_step"] = 2**32 + 17
     checkpoint = copy.deepcopy(optimizer.state_dict())
 
     target = torch.nn.Parameter(torch.ones(4, dtype=target_dtype))
@@ -58,8 +58,8 @@ def test_triton_checkpoint_preserves_bf16_state_on_cpu(source_dtype, target_dtyp
     assert restored.device == target.device
     assert torch.equal(restored.view(torch.int16), buffer.view(torch.int16))
     assert target_unused not in resumed.state
-    assert resumed.param_groups[0]["sr_offset"] == 2**32 + 17
-    assert resumed.param_groups[1]["sr_offset"] == 0
+    assert resumed.param_groups[0]["sr_step"] == 2**32 + 17
+    assert resumed.param_groups[1]["sr_step"] == 0
     assert resumed.param_groups[0]["sr_seed"] == 44
     assert resumed.param_groups[0]["lr"] == 0.1
     assert checkpoint["state"][0]["momentum_buffer"].dtype == torch.bfloat16

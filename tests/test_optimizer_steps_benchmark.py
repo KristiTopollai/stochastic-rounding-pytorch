@@ -71,9 +71,7 @@ def test_full_optimizer_path_advances_and_restarts(kind, method):
     pointers = [p.data_ptr() for p in case.problem.parameters]
     for _ in range(4):
         case.advance()
-    assert case.optimizer._next_offset() == 4 * case.problem.elements * len(
-        case.optimizer._state_names
-    )
+    assert case.optimizer._rng_step() == 4
     for p in case.problem.parameters:
         for name in case.optimizer._state_names:
             assert case.optimizer.state[p][name].dtype == torch.bfloat16
@@ -111,7 +109,7 @@ def test_compiled_optimizer_multistep_checkpoint_and_skipped_gradient(kind):
             restored = bench.build_case(case.problem, kind, "compiled_sr", compile_backend="eager")
             restored.optimizer.load_state_dict(copy.deepcopy(case.optimizer.state_dict()))
             case = restored
-    assert case.optimizer._next_offset() == reference._next_offset()
+    assert case.optimizer._rng_step() == reference._rng_step()
     if kind == "adamw":
         assert [case.optimizer.state[p]["step"] for p in case.problem.parameters] == [12, 6, 12]
 
@@ -164,9 +162,7 @@ def test_timing_excludes_gradients_and_warmup_but_calls_full_step(monkeypatch, k
         + ["gradient", "sync", "start", "step", "end", "wait"] * 3
     )
     assert result == {"wall": [0.2] * 3, "cuda": [0.1] * 3, "submit": [0.1] * 3}
-    assert case.optimizer._next_offset() == 5 * case.problem.elements * len(
-        case.optimizer._state_names
-    )
+    assert case.optimizer._rng_step() == 5
     if kind == "adamw":
         assert all(case.optimizer.state[p]["step"] == 5 for p in case.problem.parameters)
 
@@ -226,9 +222,7 @@ def test_gpu_synthetic_full_steps(kind, method, name):
     bench.validate_case(case)
     samples = bench.measure_steps(case, warmup=2, repetitions=3)
     assert all(len(values) == 3 and min(values) > 0 for values in samples.values())
-    assert case.optimizer._next_offset() == 5 * case.problem.elements * len(
-        case.optimizer._state_names
-    )
+    assert case.optimizer._rng_step() == 5
     args = bench.parse_args([])
     row = bench.make_row(case, samples, workload=name, args=args)
     assert row["state_bytes"] == 2 * case.problem.elements * len(case.optimizer._state_names)

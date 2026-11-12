@@ -6,6 +6,7 @@ import torch
 
 from benchmarks.bench_states import POLICIES, build_case, prepare_inputs, update_options
 from sr_states import StateFormat
+from sr_states._hash import state_key
 from sr_states.compiled import compile_adamw_step_, compile_sgdm_step_
 from sr_states.reference.adamw import adamw_step_
 from sr_states.reference.rounding import stochastic_round_bf16
@@ -104,7 +105,7 @@ def test_multistep_rounds_only_state_writeback(kind, parameter_dtype, rounding):
         torch.testing.assert_close(tensors[0], raw[0], rtol=0, atol=0)
         for i in range(2, len(tensors)):
             target = (
-                stochastic_round_bf16(raw[i], seed=97, offset=offset + (i - 2) * 4099)
+                stochastic_round_bf16(raw[i], seed=state_key(97, i - 2), offset=offset)
                 if rounding == "stochastic"
                 else raw[i].to(torch.bfloat16)
             )
