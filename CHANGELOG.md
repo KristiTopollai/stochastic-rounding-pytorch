@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Optimizer RNG streams use the group seed, global optimizer step, parameter
+  position, state index, and flat global element index. Checkpoints now store
+  `sr_step`. Legacy checkpoints preserve formats and state bytes and start the
+  new stream at step zero.
+- The fused backend hook `_step_parameter` now takes `seed` before `offset`.
+  Functional optimizer updates interpret `seed` as the update key and `offset`
+  as the flat shard start. DTensor execution remains unsupported.
 - Per-state `StateFormat` storage, group overrides, shared optimizer bookkeeping,
   and legacy checkpoint migration across eager, compiled, and Triton backends.
 - Saturating E4M3/E5M2 FP8 and IEEE FP16 nearest-even/stochastic casts; software
