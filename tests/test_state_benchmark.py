@@ -8,6 +8,8 @@ from benchmarks.bench_states import (
     parse_args,
     prepare_inputs,
 )
+from sr_states import SGDMReferenceSR
+from sr_states._hash import state_key
 from sr_states.compiled import compile_adamw_step_, compile_sgdm_step_
 from sr_states.rounding import cast
 
@@ -23,7 +25,7 @@ def fused_sgdm_for_validation(parameter, gradient, momentum, **options):
             proposal,
             dtype=momentum.dtype,
             rounding=options["rounding"],
-            seed=options["seed"],
+            seed=state_key(options["seed"], 0),
             offset=options["offset"],
         )
     )
@@ -36,7 +38,9 @@ def test_fp8_benchmark_validates_fused_subnormal_boundary():
     case.run()
     assert torch.equal(case.buffers[0][2].float(), torch.tensor([5, -5]) / 512)
     expected = [t.clone() for t in case.initial[0]]
-    case.reference(*expected, **case.options, state_dtype=case.state_dtype, rounding="nearest")
+    case.reference(
+        *expected, **case.tensor_options[0], state_dtype=case.state_dtype, rounding="nearest"
+    )
     assert torch.equal(expected[2].float(), torch.tensor([6, -6]) / 512)
     case.validate()
 
@@ -93,6 +97,28 @@ def test_benchmark_updates_in_place_and_resets(optimizer, policy, backend):
     for actual, initial in zip(case.buffers, case.initial):
         for tensor, source in zip(actual, initial):
             assert torch.equal(tensor.view(torch.uint8), source.view(torch.uint8))
+
+
+def test_multi_tensor_benchmark_matches_optimizer_streams():
+    g = 1.0 + torch.arange(1031, dtype=torch.float32) / 2048
+    inputs = [(torch.ones_like(g), g, torch.zeros_like(g))] * 2
+    seed, step = 7, 100
+    case = build_case(
+        inputs, optimizer="sgdm", backend="eager", policy="fp8e4_sr", seed=seed, step=step
+    )
+    params = [torch.nn.Parameter(row[0].clone()) for row in inputs]
+    optimizer = SGDMReferenceSR(params, lr=1e-3, state_dtype=case.state_dtype, seed=seed)
+    optimizer.param_groups[0]["sr_step"] = step - 1
+    for param in params:
+        param.grad = g
+    optimizer.step()
+
+    case.validate()
+    case.run()
+    stored = [row[2].view(torch.uint8) for row in case.buffers]
+    assert not torch.equal(*stored)
+    for param, actual in zip(params, stored):
+        assert torch.equal(actual, optimizer.state[param]["momentum_buffer"].view(torch.uint8))
 
 
 @pytest.mark.parametrize(
@@ -172,5 +198,6 @@ def test_compiled_inplace_update_accepts_leaf_parameters(kind):
     tensors = list(case.buffers[0])
     tensors[0] = torch.nn.Parameter(tensors[0])
     for offset in (0, 31, 2**32 + 31):
-        compiled(*tensors, **case.options, offset=offset, state_dtype=case.state_dtype)
+        options = {**case.tensor_options[0], "offset": offset}
+        compiled(*tensors, **options, state_dtype=case.state_dtype)
     assert tensors[0].grad is None

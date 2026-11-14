@@ -5,8 +5,17 @@ from __future__ import annotations
 import torch
 from torch.optim import Optimizer
 
+from sr_states._hash import state_key, update_key
 from sr_states.formats import StateFormat, force_rounding, resolve_formats
 from sr_states.rounding import cast
+
+if torch.distributed.is_available():
+    from torch.distributed.tensor import DTensor
+
+
+def _validate_rng_numel(numel: int) -> None:
+    if numel > 1 << 32:
+        raise ValueError("optimizer RNG supports at most 2**32 elements per parameter")
 
 
 class StateOptimizer(Optimizer):
@@ -45,7 +54,7 @@ class StateOptimizer(Optimizer):
             **defaults,
             "state_format": self._serialize(formats),
             "sr_seed": int(seed),
-            "sr_offset": 0,
+            "sr_step": 0,
         }
         super().__init__(params, defaults)
 
@@ -101,6 +110,8 @@ class StateOptimizer(Optimizer):
             fmt.validate(self._rounding_backend)
         group.pop("state_dtype", None)
         group.pop("rounding", None)
+        group.pop("sr_offset", None)
+        group.setdefault("sr_step", 0)
         group["state_format"] = self._serialize(formats)
         self._validate_group({**(inherited or {}), **group})
         return group
@@ -109,7 +120,8 @@ class StateOptimizer(Optimizer):
         normalized = self._normalize_group(param_group, self.defaults)
         super().add_param_group(normalized)
 
-    def _step_parameter(self, parameter, state, group, formats, step, offset):
+    def _step_parameter(self, parameter, state, group, formats, step, seed, offset):
+        """Update one parameter using its RNG key and flat shard start."""
         updated_p, proposals = self._compute(
             parameter.float(),
             parameter.grad.float(),
@@ -124,8 +136,8 @@ class StateOptimizer(Optimizer):
                 value,
                 dtype=fmt.dtype,
                 rounding=fmt.rounding,
-                seed=group["sr_seed"],
-                offset=offset + i * parameter.numel(),
+                seed=state_key(seed, i),
+                offset=offset,
             )
             for i, (value, fmt) in enumerate(zip(proposals, formats))
         ]
@@ -133,20 +145,32 @@ class StateOptimizer(Optimizer):
         for name, value in zip(self._state_names, stored):
             state[name].copy_(value)
 
+    def _shard_start(self, parameter) -> int:
+        """Return the flat global index of the parameter's first local element."""
+        if torch.distributed.is_available() and isinstance(parameter, DTensor):
+            raise NotImplementedError("DTensor optimizer parameters require FSDP2 support")
+        return 0
+
     @torch.no_grad()
     def step(self, closure=None):
         loss = None
         if closure is not None:
             with torch.enable_grad():
                 loss = closure()
-        offset = self._next_offset()
+        # Reserve the step before updating parameters so a retry after partial failure advances it.
+        rng_step = self._rng_step() + 1
+        for group in self.param_groups:
+            group["sr_step"] = rng_step
+        first_index = 0
         for group in self.param_groups:
             formats = self._formats(group)
-            for parameter in group["params"]:
+            for param_index, parameter in enumerate(group["params"], start=first_index):
                 if parameter.grad is None:
                     continue
                 if parameter.grad.is_sparse:
                     raise RuntimeError(f"{type(self).__name__} does not support sparse gradients")
+                offset = self._shard_start(parameter)
+                _validate_rng_numel(parameter.numel())
                 state = self.state[parameter]
                 for name, fmt in zip(self._state_names, formats):
                     if name not in state:
@@ -156,11 +180,11 @@ class StateOptimizer(Optimizer):
                     elif state[name].dtype != fmt.dtype:
                         raise ValueError(f"{name} dtype does not match its state format")
                 next_step = state.get("step", 0) + 1
-                self._step_parameter(parameter, state, group, formats, next_step, offset)
+                seed = update_key(group["sr_seed"], rng_step, param_index)
+                self._step_parameter(parameter, state, group, formats, next_step, seed, offset)
                 if self._uses_step:
                     state["step"] = next_step
-                offset += len(self._state_names) * parameter.numel()
-                group["sr_offset"] = offset
+            first_index += len(group["params"])
         return loss
 
     def load_state_dict(self, state_dict):
@@ -199,5 +223,5 @@ class StateOptimizer(Optimizer):
             before.remove()
             after.remove()
 
-    def _next_offset(self) -> int:
-        return max((int(group["sr_offset"]) for group in self.param_groups), default=0)
+    def _rng_step(self) -> int:
+        return max((int(group["sr_step"]) for group in self.param_groups), default=0)

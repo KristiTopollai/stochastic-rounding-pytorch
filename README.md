@@ -16,6 +16,7 @@ pip install -e '.[triton]'    # Triton: Linux + NVIDIA GPU + CUDA-enabled PyTorc
 
 ```python
 import torch
+
 from sr_states.triton import AdamWTriton
 
 p = torch.nn.Parameter(torch.randn(1024, device="cuda"))
@@ -62,11 +63,21 @@ A single `state_format=StateFormat(torch.float16)` applies to every state.
 Use either `state_format` or the `state_dtype`/`rounding` shorthand.
 Triton FP8 requires **sm_89+**. BF16 remains the default for all states.
 
+Optimizer rounding derives a 32-bit counter base from the group seed, the
+checkpointed RNG step, the parameter's position across groups, and the state
+index. The RNG step advances before gradient processing, after any closure
+returns. Calls with no gradients or an error during gradient processing still
+consume that step. Each element adds its flat global index to the counter base
+modulo `2**32`, so counters are distinct within one state update of up to
+`2**32` elements. Counter ranges can overlap across updates. Checkpoints with
+the old `sr_offset` field keep their stored state bytes and start the new RNG
+step at zero.
 
 ## Standalone casts
 
 ```python
 import torch
+
 from sr_states import cast
 
 x = torch.tensor([1.003, -1.006], dtype=torch.float32)
@@ -122,7 +133,9 @@ declare `_state_names`, and implement
 and a tuple of FP32 state proposals. The base handles state allocation and
 rounding, parameter groups, counters, missing gradients, and checkpoints. See the
 [three-state example](tests/test_state_formats.py). Fused backends can override
-`_step_parameter`. Scaled or blockwise quantizers need an additional storage and
+`_step_parameter(parameter, state, group, formats, step, seed, offset)`, where
+`seed` is the parameter update key and `offset` is the flat shard start.
+Scaled or blockwise quantizers need an additional storage and
 metadata interface; `register_rounding` currently covers unscaled elementwise casts.
 
 ## Tests

@@ -50,7 +50,7 @@ class AdamWReferenceSR(StateOptimizer):
     def _validate_group(self, group):
         validate_adamw(group)
 
-    def _step_parameter(self, parameter, state, group, formats, step, offset):
+    def _step_parameter(self, parameter, state, group, formats, step, seed, offset):
         beta1, beta2 = group["betas"]
         self._update(
             parameter,
@@ -64,7 +64,7 @@ class AdamWReferenceSR(StateOptimizer):
             weight_decay=group["weight_decay"],
             step=step,
             formats=formats,
-            seed=group["sr_seed"],
+            seed=seed,
             offset=offset,
         )
 

@@ -1,10 +1,31 @@
-"""Counter hash shared by elementwise stochastic rounding rules."""
+"""Optimizer RNG keys and the elementwise stochastic rounding hash."""
 
 import torch
 
 _U32_MASK = 0xFFFFFFFF
 _HASH_MUL_1 = 0x7FEB352D
 _HASH_MUL_2 = 0x846CA68B
+
+
+def _h32(value: int) -> int:
+    value ^= value >> 16
+    value = (value * _HASH_MUL_1) & _U32_MASK
+    value ^= value >> 15
+    value = (value * _HASH_MUL_2) & _U32_MASK
+    return value ^ (value >> 16)
+
+
+def update_key(seed: int, step: int, param_index: int) -> int:
+    """Derive a 32-bit key from the low 64 bits of the seed and step."""
+    key = _h32((seed & _U32_MASK) ^ 0x9E3779B9)
+    for word in (seed >> 32, step, step >> 32, param_index):
+        key = _h32(key ^ (word & _U32_MASK))
+    return key
+
+
+def state_key(key: int, state_index: int) -> int:
+    """Derive the state-specific counter base from an optimizer update key."""
+    return _h32((key ^ state_index) & _U32_MASK)
 
 
 def _u32_hash(indices: torch.Tensor, seed: int) -> torch.Tensor:

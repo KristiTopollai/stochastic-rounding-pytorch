@@ -145,7 +145,7 @@ class OptimizerCase:
         self.problem.reset()
         self.optimizer.state.clear()
         for group in self.optimizer.param_groups:
-            group["sr_offset"] = 0
+            group["sr_step"] = 0
 
     def advance(self):
         self.problem.prepare_gradients()
@@ -200,7 +200,7 @@ def validate_case(case, *, steps=3):
                 )
             if case.kind == "adamw":
                 assert case.optimizer.state[actual]["step"] == reference.state[expected]["step"]
-        assert case.optimizer._next_offset() == reference._next_offset()
+        assert case.optimizer._rng_step() == reference._rng_step()
     case.restart()
 
 
@@ -293,7 +293,7 @@ def make_row(case, samples, *, workload, args):
         "rehearsal_steps": args.warmup + args.repetitions,
         "first_timed_step": args.warmup + 1,
         "last_timed_step": args.warmup + args.repetitions,
-        "final_rng_offset": case.optimizer._next_offset(),
+        "final_rng_step": case.optimizer._rng_step(),
         "state_bytes": sum(
             state[name].numel() * state[name].element_size()
             for state in case.optimizer.state.values()

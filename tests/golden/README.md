@@ -10,7 +10,12 @@ missing gradients, and counter wraparound over seven steps.
 with `git archive --format=zip 393c527 sr_states`. On other CPU environments,
 `tests/test_state_formats.py` replays this source locally before comparing bytes;
 it does not assume that FP32 arithmetic is identical across platforms or Torch
-versions. In the original capture environment it also checks the saved fixture.
+versions. The replay and fixture comparisons use FP32 states and BF16 nearest
+states for each optimizer and parameter dtype. The committed capture retains the
+original stochastic cases and offsets for reference. RNG stream bytes are
+checked against the current specification in `tests/test_rng_streams.py`.
+That test module also runs the frozen optimizer in a subprocess to write a
+legacy checkpoint and verifies that it loads and resumes with the new RNG.
 
 To capture the baseline, copy `scripts/record_optimizer_golden.py` into the frozen
 baseline's `scripts/` directory, then run it from that source tree:

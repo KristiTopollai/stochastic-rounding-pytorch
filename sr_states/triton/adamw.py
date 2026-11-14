@@ -12,6 +12,7 @@ from ._common import require_triton, tl, triton, validate_fp8_device
 from ._optimizer import nonnegative, validate_options, validate_tensors
 
 if triton is not None:
+    from .sr_cast import _u32_hash
 
     @triton.jit
     def _fused_adamw_kernel(
@@ -45,13 +46,12 @@ if triton is not None:
         denominator = tl.sqrt(updated_v) / correction2_sqrt + eps
         updated_parameter = parameter * decay - step_size * (updated_m / denominator)
 
-        counter = (
-            indices.to(tl.uint32) + tl.cast(seed, tl.uint32) + tl.cast(logical_offset, tl.uint32)
-        )
-        stored_m = ROUND_M(updated_m, counter, exp_avg_ptr.dtype.element_ty)
-        stored_v = ROUND_V(
-            updated_v, counter + tl.cast(n_elements, tl.uint32), exp_avg_sq_ptr.dtype.element_ty
-        )
+        global_index = indices.to(tl.uint32) + tl.cast(logical_offset, tl.uint32)
+        update_key = tl.cast(seed, tl.uint32)
+        counter_m = global_index + _u32_hash(update_key)
+        counter_v = global_index + _u32_hash(update_key ^ 1)
+        stored_m = ROUND_M(updated_m, counter_m, exp_avg_ptr.dtype.element_ty)
+        stored_v = ROUND_V(updated_v, counter_v, exp_avg_sq_ptr.dtype.element_ty)
         tl.store(parameter_ptr + indices, updated_parameter, mask=mask)
         tl.store(exp_avg_ptr + indices, stored_m, mask=mask)
         tl.store(exp_avg_sq_ptr + indices, stored_v, mask=mask)
@@ -80,7 +80,8 @@ def triton_adamw_step_(
 
     Inputs must be contiguous, disjoint CUDA tensors with identical shapes.
     Parameters and gradients may be FP32 or BF16. Moments may use different registered storage dtypes. The parameter update uses the unrounded FP32 moments.
-    ``step`` starts at one; the two moments use consecutive RNG counter ranges.
+    ``step`` starts at one. Each moment derives its own counter base from the
+    update key ``seed``. ``offset`` is the flat starting index of this shard.
     """
     require_triton()
     if formats is None:
@@ -179,7 +180,7 @@ class AdamWTriton(AdamWReferenceSR):
             {"block_size": self.defaults.get("block_size", self._initial_block_size), **param_group}
         )
 
-    def _step_parameter(self, parameter, state, group, formats, step, offset):
+    def _step_parameter(self, parameter, state, group, formats, step, seed, offset):
         beta1, beta2 = group["betas"]
         triton_adamw_step_(
             parameter,
@@ -193,7 +194,7 @@ class AdamWTriton(AdamWReferenceSR):
             weight_decay=group["weight_decay"],
             step=step,
             formats=formats,
-            seed=group["sr_seed"],
+            seed=seed,
             offset=offset,
             block_size=group["block_size"],
         )

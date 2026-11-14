@@ -22,7 +22,7 @@ def test_checkpoint_keeps_state_precision(optimizer_class, state_dtype, paramete
         optimizer.state[p][name] = original.clone()
     if "exp_avg" in optimizer._state_names:
         optimizer.state[p]["step"] = 7
-    optimizer.param_groups[0]["sr_offset"] = 2**32 + 31
+    optimizer.param_groups[0]["sr_step"] = 2**32 + 31
     checkpoint = copy.deepcopy(optimizer.state_dict())
 
     q = torch.nn.Parameter(p.detach().clone())
@@ -39,7 +39,7 @@ def test_checkpoint_keeps_state_precision(optimizer_class, state_dtype, paramete
         bits = torch.int32 if state_dtype == torch.float32 else torch.int16
         assert torch.equal(actual.view(bits), original.view(bits))
         assert actual.data_ptr() != checkpoint["state"][0][name].data_ptr()
-    assert restored.param_groups[0]["sr_offset"] == 2**32 + 31
+    assert restored.param_groups[0]["sr_step"] == 2**32 + 31
     assert restored.param_groups[0]["sr_seed"] == 42
     if "exp_avg" in optimizer._state_names:
         assert restored.state[q]["step"] == 7
@@ -70,8 +70,8 @@ def test_steps_groups_missing_gradients_and_resume(optimizer_class, cpu_state_ke
         parameters[index].grad = torch.ones_like(parameters[index]) * 0.103
     optimizer.step()
     assert parameters[1] not in optimizer.state
-    assert optimizer.param_groups[0]["sr_offset"] == state_count * 17
-    assert optimizer.param_groups[1]["sr_offset"] == 2 * state_count * 17
+    assert optimizer.param_groups[0]["sr_step"] == 1
+    assert optimizer.param_groups[1]["sr_step"] == 1
     state = optimizer.state[parameters[0]]
     assert sum(state[name].nbytes for name in optimizer._state_names) == initial_bytes
 
@@ -92,7 +92,7 @@ def test_steps_groups_missing_gradients_and_resume(optimizer_class, cpu_state_ke
                 assert torch.equal(optimizer.state[p][name], resumed.state[q][name])
     if state_count == 2:
         assert [optimizer.state[p]["step"] for p in parameters] == [5, 4, 5]
-    assert optimizer._next_offset() == (2 + 4 * 3) * 17 * state_count
+    assert optimizer._rng_step() == 5
 
 
 @pytest.mark.parametrize("optimizer_class", [AdamWTriton, SGDMTriton])
@@ -108,10 +108,10 @@ def test_closure_and_sparse_gradient(optimizer_class, cpu_state_kernels):
 
     assert optimizer.step(closure).item() == 4
     p.grad = torch.sparse_coo_tensor([[0]], [1.0], size=(4,), check_invariants=True)
-    offset = optimizer._next_offset()
+    rng_step = optimizer._rng_step()
     with pytest.raises(RuntimeError, match="sparse"):
         optimizer.step()
-    assert optimizer._next_offset() == offset
+    assert optimizer._rng_step() == rng_step + 1
 
 
 @pytest.mark.parametrize(

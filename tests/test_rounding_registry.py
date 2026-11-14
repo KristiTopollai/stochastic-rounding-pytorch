@@ -172,4 +172,4 @@ def test_triton_host_dispatch_passes_registered_callback(monkeypatch, kind, cls)
         for _, kwargs in launches
         for key in (("ROUND",) if kind == "sgd" else ("ROUND_M", "ROUND_V"))
     )
-    assert optimizer.param_groups[0]["sr_offset"] == 2 * len(optimizer._state_names) * p.numel()
+    assert optimizer.param_groups[0]["sr_step"] == 2

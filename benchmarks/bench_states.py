@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import torch
 
 from benchmarks._utils import cuda_samples_ms, nonnegative_int, positive_int, timing_row, write_rows
+from sr_states._hash import state_key, update_key
 from sr_states.compiled import compile_adamw_step_, compile_sgdm_step_
 from sr_states.reference.adamw import adamw_step_
 from sr_states.reference.sgd import sgdm_step_
@@ -49,7 +50,10 @@ def parse_args(argv=None, *, optimizer=None):
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--order-seed", type=int, default=0)
     parser.add_argument(
-        "--step", type=positive_int, default=100, help="fixed AdamW bias-correction step"
+        "--step",
+        type=positive_int,
+        default=100,
+        help="fixed RNG step and AdamW bias-correction step",
     )
     parser.add_argument(
         "--policies", nargs="+", choices=tuple(POLICIES), default=["bf16_sr", "bf16_nr", "fp32"]
@@ -99,7 +103,7 @@ class UpdateCase:
     buffers: list
     function: object
     reference: object
-    options: dict
+    tensor_options: list[dict]
     state_dtype: torch.dtype
     rounding: str
     triton: bool
@@ -113,22 +117,19 @@ class UpdateCase:
 
     @torch.no_grad()
     def run(self):
-        offset = 0
-        for tensors in self.buffers:
-            kwargs = {**self.options, "rounding": self.rounding, "offset": offset}
+        for tensors, options in zip(self.buffers, self.tensor_options):
+            kwargs = {**options, "rounding": self.rounding}
             if self.triton:
                 kwargs["block_size"] = self.block_size
             else:
                 kwargs["state_dtype"] = self.state_dtype
             self.function(*tensors, **kwargs)
-            offset += (len(tensors) - 2) * tensors[0].numel()
 
     @torch.no_grad()
     def validate(self):
         self.reset()
         self.run()
-        offset = 0
-        for actual, initial in zip(self.buffers, self.initial):
+        for actual, initial, update in zip(self.buffers, self.initial, self.tensor_options):
             fp8 = self.state_dtype in (torch.float8_e4m3fn, torch.float8_e5m2)
             expected = [
                 tensor.float().clone() if fp8 and index >= 2 else tensor.clone()
@@ -136,10 +137,9 @@ class UpdateCase:
             ]
             self.reference(
                 *expected,
-                **self.options,
+                **update,
                 rounding=self.rounding,
                 state_dtype=torch.float32 if fp8 else self.state_dtype,
-                offset=offset,
             )
             if fp8:
                 # Fused arithmetic can land on the other side of an FP8
@@ -149,7 +149,7 @@ class UpdateCase:
                     tensor.float().clone() if index >= 2 else tensor.clone()
                     for index, tensor in enumerate(initial)
                 ]
-                options = {**self.options, "rounding": "nearest", "offset": offset}
+                options = {**update, "rounding": "nearest"}
                 if self.triton:
                     options["block_size"] = self.block_size
                 else:
@@ -165,8 +165,8 @@ class UpdateCase:
                         proposals[index],
                         dtype=result.dtype,
                         rounding=self.rounding,
-                        seed=self.options["seed"],
-                        offset=offset + (index - 2) * result.numel(),
+                        seed=state_key(update["seed"], index - 2),
+                        offset=update["offset"],
                     )
                     torch.testing.assert_close(
                         result.view(torch.uint8), stored.view(torch.uint8), rtol=0, atol=0
@@ -181,7 +181,6 @@ class UpdateCase:
                     torch.testing.assert_close(
                         result.float(), target.float(), rtol=tolerance, atol=1e-6
                     )
-            offset += (len(actual) - 2) * actual[0].numel()
         self.reset()
 
 
@@ -204,12 +203,17 @@ def build_case(
         for row in inputs
     ]
     buffers = [tuple(tensor.clone() for tensor in row) for row in initial]
+    # Each repetition replays the same optimizer step on complete tensors.
+    tensor_options = [
+        {**update_options(optimizer, seed=update_key(seed, step, index), step=step), "offset": 0}
+        for index in range(len(buffers))
+    ]
     return UpdateCase(
         initial,
         buffers,
         function,
         reference,
-        update_options(optimizer, seed=seed, step=step),
+        tensor_options,
         state_dtype,
         rounding,
         backend == "triton",
@@ -273,7 +277,7 @@ def main(argv=None, *, optimizer=None):
                 parameter_dtype=args.parameter_dtype,
                 state_dtype=str(case.state_dtype),
                 rounding=case.rounding,
-                step=args.step if args.optimizer == "adamw" else "",
+                step=args.step,
                 block_size=args.block_size if backend == "triton" else "",
                 seed=args.seed,
                 order_seed=args.order_seed,

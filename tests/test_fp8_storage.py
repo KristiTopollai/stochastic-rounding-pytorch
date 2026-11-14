@@ -110,7 +110,7 @@ def test_toy_optimizer_fp8_formats(mixed):
         assert torch.equal(p, q)
         for name in opt._state_names:
             assert torch.equal(bits(opt.state[p][name]), bits(resumed.state[q][name]))
-    assert opt._next_offset() == 4 * 3 * 17
+    assert opt._rng_step() == 4
 
 
 @pytest.mark.parametrize("capability", [(8, 0), (8, 6), (8, 9), (9, 0), (10, 0)])
@@ -156,7 +156,7 @@ def test_each_state_dispatches_its_own_callback(monkeypatch, kind, cls):
     p.grad = torch.ones_like(p)
     opt.step()
     opt.step()
-    assert opt._next_offset() == 2 * len(opt._state_names) * p.numel()
+    assert opt._rng_step() == 2
     if kind == "adamw":
         assert all(
             item["ROUND_M"] is callbacks[torch.float8_e4m3fn, "stochastic"]

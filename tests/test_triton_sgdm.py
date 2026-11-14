@@ -99,6 +99,6 @@ def test_triton_optimizer_checkpoint_restores_rng_position(rounding, parameter_d
             first_optimizer.state[first]["momentum_buffer"],
             resumed_optimizer.state[resumed]["momentum_buffer"],
         )
-        expected_offset = (step + 1) * initial.numel()
-        assert first_optimizer.param_groups[0]["sr_offset"] == expected_offset
-        assert resumed_optimizer.param_groups[0]["sr_offset"] == expected_offset
+        expected_rng_step = step + 1
+        assert first_optimizer.param_groups[0]["sr_step"] == expected_rng_step
+        assert resumed_optimizer.param_groups[0]["sr_step"] == expected_rng_step

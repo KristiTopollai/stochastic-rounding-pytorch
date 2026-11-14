@@ -6,6 +6,7 @@ import torch
 
 from benchmarks.bench_states import POLICIES, build_case, prepare_inputs, update_options
 from sr_states import StateFormat
+from sr_states._hash import state_key, update_key
 from sr_states.compiled import compile_adamw_step_, compile_sgdm_step_
 from sr_states.reference.adamw import adamw_step_
 from sr_states.reference.rounding import stochastic_round_bf16
@@ -31,6 +32,39 @@ def require_policy(policy):
         9,
     ):
         pytest.skip("requires sm_89 FP8 storage")
+
+
+@pytest.mark.parametrize("kind", ["sgdm", "adamw"])
+@pytest.mark.parametrize("policy", ["bf16_sr", "fp16_sr", "fp8e4_sr", "fp8e5_sr"])
+def test_rng_state_bytes_match_reference_and_flat_shards(kind, policy):
+    require_policy(policy)
+    dtype, _ = POLICIES[policy]
+    g = 1.0 + torch.arange(1031, device="cuda", dtype=torch.float32) / 2048
+    states = [torch.zeros_like(g, dtype=dtype) for _ in range(2 if kind == "adamw" else 1)]
+    initial = (torch.ones_like(g), g, *states)
+    reference = adamw_step_ if kind == "adamw" else sgdm_step_
+    options = (
+        {"beta1": 0.5, "beta2": 0.5, "eps": 0.125, "weight_decay": 0.0, "step": 1}
+        if kind == "adamw"
+        else {"momentum_factor": 0.5}
+    )
+    options.update(lr=0.0, seed=update_key(0xFEDCBA9876543210, (1 << 32) + 1, 7))
+    offset = (1 << 32) - 211
+    expected = tuple(tensor.clone() for tensor in initial)
+    # Dyadic gradients give exact FP32 proposals, including AdamW's squares.
+    reference(*expected, state_dtype=dtype, offset=offset, **options)
+
+    update = step_function(kind)
+    full = tuple(tensor.clone() for tensor in initial)
+    update(*full, offset=offset, **options)
+    for actual, target in zip(full, expected):
+        assert torch.equal(actual.view(torch.uint8), target.view(torch.uint8))
+
+    sharded = tuple(tensor.clone() for tensor in initial)
+    for lo, hi in ((0, 11), (11, 227), (227, 728), (728, g.numel())):
+        update(*(tensor[lo:hi] for tensor in sharded), offset=offset + lo, **options)
+    for actual, target in zip(sharded, full):
+        assert torch.equal(actual.view(torch.uint8), target.view(torch.uint8))
 
 
 def step_function(kind):
@@ -104,7 +138,7 @@ def test_multistep_rounds_only_state_writeback(kind, parameter_dtype, rounding):
         torch.testing.assert_close(tensors[0], raw[0], rtol=0, atol=0)
         for i in range(2, len(tensors)):
             target = (
-                stochastic_round_bf16(raw[i], seed=97, offset=offset + (i - 2) * 4099)
+                stochastic_round_bf16(raw[i], seed=state_key(97, i - 2), offset=offset)
                 if rounding == "stochastic"
                 else raw[i].to(torch.bfloat16)
             )
