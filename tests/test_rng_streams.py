@@ -1,5 +1,8 @@
 import copy
+import subprocess
 import sys
+import zipfile
+from pathlib import Path
 
 import pytest
 import torch
@@ -210,6 +213,60 @@ def test_legacy_checkpoint_keeps_state_bytes_and_restarts_rng():
         proposal, dtype=formats["exp_avg"].dtype, seed=state_key(update_key(SEED, 1, 0), 0)
     )
     assert_bytes_equal(resumed.state[q]["exp_avg"], expected)
+
+
+def test_load_checkpoint_written_by_v01_optimizer(tmp_path):
+    baseline = Path(__file__).parent / "golden/baseline_393c527.zip"
+    with zipfile.ZipFile(baseline) as archive:
+        archive.extractall(tmp_path)
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import sys
+import torch
+from sr_states import AdamWReferenceSR
+
+p = torch.nn.Parameter(torch.ones(259))
+optimizer = AdamWReferenceSR([p], seed=int(sys.argv[1]), betas=(0.5, 0.5))
+p.grad = 1.0 + torch.arange(259, dtype=torch.float32) / 2048
+optimizer.step()
+optimizer.step()
+torch.save((p.detach(), optimizer.state_dict()), "legacy.pt")
+""",
+            str(SEED),
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    parameter, checkpoint = torch.load(tmp_path / "legacy.pt", weights_only=True)
+    legacy_group = checkpoint["param_groups"][0]
+    assert legacy_group["sr_offset"] == 2 * 2 * parameter.numel()
+    assert "sr_step" not in legacy_group
+    assert "state_format" not in legacy_group
+
+    p = torch.nn.Parameter(parameter)
+    optimizer = AdamWReferenceSR([p], state_dtype=torch.float32)
+    optimizer.load_state_dict(checkpoint)
+    group = optimizer.param_groups[0]
+    assert group["sr_step"] == 0
+    assert group["sr_seed"] == SEED
+    assert "sr_offset" not in group
+    assert group["state_format"] == dict.fromkeys(
+        ("exp_avg", "exp_avg_sq"), StateFormat(torch.bfloat16, "stochastic").to_dict()
+    )
+    assert optimizer.state[p]["step"] == 2
+    for name in optimizer._state_names:
+        assert_bytes_equal(optimizer.state[p][name], checkpoint["state"][0][name])
+
+    p.grad = 1.0 + torch.arange(p.numel(), dtype=torch.float32) / 2048
+    proposal = 0.5 * (optimizer.state[p]["exp_avg"].float() + p.grad)
+    optimizer.step()
+    assert group["sr_step"] == 1
+    assert optimizer.state[p]["step"] == 3
+    expected = cast(proposal, dtype=torch.bfloat16, seed=state_key(update_key(SEED, 1, 0), 0))
+    assert_bytes_equal(optimizer.state[p]["exp_avg"], expected)
 
 
 def test_rng_numel_limit():

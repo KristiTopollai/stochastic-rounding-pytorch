@@ -65,11 +65,13 @@ Triton FP8 requires **sm_89+**. BF16 remains the default for all states.
 
 Optimizer rounding derives a 32-bit counter base from the group seed, the
 checkpointed RNG step, the parameter's position across groups, and the state
-index. Each `step()` call advances the RNG step once, including calls with no
-gradients. Each element adds its flat global index to the counter base modulo
-`2**32`, so counters are distinct within one state update of up to `2**32`
-elements. Counter ranges can overlap across updates. Checkpoints with the old
-`sr_offset` field keep their stored state bytes and start the new RNG step at zero.
+index. The RNG step advances before gradient processing, after any closure
+returns. Calls with no gradients or an error during gradient processing still
+consume that step. Each element adds its flat global index to the counter base
+modulo `2**32`, so counters are distinct within one state update of up to
+`2**32` elements. Counter ranges can overlap across updates. Checkpoints with
+the old `sr_offset` field keep their stored state bytes and start the new RNG
+step at zero.
 
 ## Standalone casts
 

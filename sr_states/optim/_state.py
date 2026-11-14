@@ -157,6 +157,7 @@ class StateOptimizer(Optimizer):
         if closure is not None:
             with torch.enable_grad():
                 loss = closure()
+        # Reserve the step before updating parameters so a retry after partial failure advances it.
         rng_step = self._rng_step() + 1
         for group in self.param_groups:
             group["sr_step"] = rng_step
