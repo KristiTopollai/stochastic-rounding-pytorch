@@ -1,7 +1,6 @@
 import copy
 import importlib
 from contextlib import nullcontext
-from types import SimpleNamespace
 
 import pytest
 import torch
@@ -142,7 +141,7 @@ def test_bad_custom_cast_contract_fails_explicitly():
 
 @pytest.mark.parametrize("kind,cls", [("sgd", SGDMTriton), ("adamw", AdamWTriton)])
 def test_triton_host_dispatch_passes_registered_callback(monkeypatch, kind, cls):
-    # Exercise the real host wrapper/optimizer on CPU; only the GPU launch is mocked.
+    # Exercise the real host wrapper/optimizer on CPU; mock CUDA checks and launches.
     # The Linux compilation test separately verifies real JIT callback specialization.
     def jit_callback(value, counter, dtype):
         raise AssertionError("the mocked launch must not execute the callback")
@@ -155,11 +154,10 @@ def test_triton_host_dispatch_passes_registered_callback(monkeypatch, kind, cls)
         def __getitem__(self, grid):
             return lambda *args, **kwargs: launches.append((args, kwargs))
 
-    kernel_name = "_fused_sgdm_kernel" if kind == "sgd" else "_fused_adamw_kernel"
+    kernel_name = "_multi_sgdm_kernel" if kind == "sgd" else "_multi_adamw_kernel"
     monkeypatch.setattr(module, kernel_name, Kernel(), raising=False)
     monkeypatch.setattr(module, "require_triton", lambda: None)
-    monkeypatch.setattr(module, "validate_tensors", lambda *args: None)
-    monkeypatch.setattr(module, "triton", SimpleNamespace(cdiv=lambda n, b: (n + b - 1) // b))
+    monkeypatch.setattr(module, "validate_update_device", lambda *args: None)
     monkeypatch.setattr(torch.cuda, "device", lambda device: nullcontext())
     p = torch.nn.Parameter(torch.ones(17))
     optimizer = cls([p], lr=0.01, rounding="custom", seed=19)

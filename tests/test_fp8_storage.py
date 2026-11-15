@@ -4,7 +4,6 @@ import copy
 import importlib
 import io
 from contextlib import nullcontext
-from types import SimpleNamespace
 
 import pytest
 import torch
@@ -13,7 +12,7 @@ from test_state_formats import ThreeState, bits
 from sr_states import AdamWReferenceSR, StateFormat
 from sr_states.compiled import AdamWCompiledSR
 from sr_states.triton import AdamWTriton, SGDMTriton
-from sr_states.triton._common import validate_fp8_device
+from sr_states.triton._common import _device_capability, validate_fp8_device
 
 MIXED = {
     "exp_avg": StateFormat(torch.float8_e4m3fn),
@@ -115,13 +114,24 @@ def test_toy_optimizer_fp8_formats(mixed):
 
 @pytest.mark.parametrize("capability", [(8, 0), (8, 6), (8, 9), (9, 0), (10, 0)])
 def test_fp8_capability_check(monkeypatch, capability):
-    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device: capability)
+    _device_capability.cache_clear()
+    seen = []
+
+    def get_capability(device):
+        seen.append(device)
+        return capability
+
+    monkeypatch.setattr(torch.cuda, "get_device_capability", get_capability)
     if capability < (8, 9):
         with pytest.raises(ValueError, match="sm_89"):
             validate_fp8_device("cuda:0", torch.float8_e4m3fn, torch.float8_e5m2)
     else:
         validate_fp8_device("cuda:0", torch.float8_e4m3fn, torch.float8_e5m2)
+    if capability >= (8, 9):
+        validate_fp8_device("cuda:0", torch.float8_e4m3fn)
     validate_fp8_device("cpu", torch.float16, torch.bfloat16, torch.float32)
+    assert seen == ["cuda:0"]
+    _device_capability.cache_clear()
 
 
 @pytest.mark.parametrize("kind,cls", [("adamw", AdamWTriton), ("sgd", SGDMTriton)])
@@ -140,15 +150,13 @@ def test_each_state_dispatches_its_own_callback(monkeypatch, kind, cls):
 
     monkeypatch.setattr(
         module,
-        "_fused_adamw_kernel" if kind == "adamw" else "_fused_sgdm_kernel",
+        "_multi_adamw_kernel" if kind == "adamw" else "_multi_sgdm_kernel",
         Kernel(),
         raising=False,
     )
     monkeypatch.setattr(module, "require_triton", lambda: None)
-    monkeypatch.setattr(module, "validate_tensors", lambda *args: None)
-    monkeypatch.setattr(module, "validate_fp8_device", lambda *args: None)
+    monkeypatch.setattr(module, "validate_update_device", lambda *args: None)
     monkeypatch.setattr(module, "get_triton_rounding", resolve)
-    monkeypatch.setattr(module, "triton", SimpleNamespace(cdiv=lambda n, b: (n + b - 1) // b))
     monkeypatch.setattr(torch.cuda, "device", lambda device: nullcontext())
     fmt = MIXED if kind == "adamw" else StateFormat(torch.float8_e4m3fn)
     p = torch.nn.Parameter(torch.ones(17))
@@ -157,6 +165,7 @@ def test_each_state_dispatches_its_own_callback(monkeypatch, kind, cls):
     opt.step()
     opt.step()
     assert opt._rng_step() == 2
+    assert len(seen) == 2
     if kind == "adamw":
         assert all(
             item["ROUND_M"] is callbacks[torch.float8_e4m3fn, "stochastic"]

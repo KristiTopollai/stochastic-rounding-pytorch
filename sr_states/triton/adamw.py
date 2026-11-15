@@ -8,11 +8,53 @@ from sr_states.formats import StateFormat, resolve_formats
 from sr_states.optim.adamw import AdamWReferenceSR
 from sr_states.rounding import get_triton_rounding
 
-from ._common import require_triton, tl, triton, validate_fp8_device
+from ._common import require_triton, tl, triton, validate_fp8_device, validate_update_device
+from ._keys import RNG_WORD_ARGS, split_words
+from ._multi_tensor import CHUNK_TILES, prepare_group
 from ._optimizer import nonnegative, validate_options, validate_tensors
 
 if triton is not None:
-    from .sr_cast import _u32_hash
+    from ._common import _chunk_info
+    from ._keys import _state_key, _update_key
+
+    @triton.jit
+    def _adamw_tile(
+        parameter_ptr,
+        gradient_ptr,
+        exp_avg_ptr,
+        exp_avg_sq_ptr,
+        indices,
+        mask,
+        beta1,
+        beta2,
+        one_minus_beta1,
+        one_minus_beta2,
+        step_size,
+        correction2_sqrt,
+        decay,
+        eps,
+        key,
+        logical_offset,
+        ROUND_M: tl.constexpr,
+        ROUND_V: tl.constexpr,
+    ):
+        parameter = tl.load(parameter_ptr + indices, mask=mask, other=0.0).to(tl.float32)
+        gradient = tl.load(gradient_ptr + indices, mask=mask, other=0.0).to(tl.float32)
+        m = tl.load(exp_avg_ptr + indices, mask=mask, other=0.0).to(tl.float32)
+        v = tl.load(exp_avg_sq_ptr + indices, mask=mask, other=0.0).to(tl.float32)
+        updated_m = beta1 * m + one_minus_beta1 * gradient
+        updated_v = beta2 * v + one_minus_beta2 * (gradient * gradient)
+        denominator = tl.sqrt(updated_v) / correction2_sqrt + eps
+        updated_parameter = parameter * decay - step_size * (updated_m / denominator)
+
+        global_index = indices.to(tl.uint32) + tl.cast(logical_offset, tl.uint32)
+        counter_m = global_index + _state_key(key, 0)
+        counter_v = global_index + _state_key(key, 1)
+        stored_m = ROUND_M(updated_m, counter_m, exp_avg_ptr.dtype.element_ty)
+        stored_v = ROUND_V(updated_v, counter_v, exp_avg_sq_ptr.dtype.element_ty)
+        tl.store(parameter_ptr + indices, updated_parameter, mask=mask)
+        tl.store(exp_avg_ptr + indices, stored_m, mask=mask)
+        tl.store(exp_avg_sq_ptr + indices, stored_v, mask=mask)
 
     @triton.jit
     def _fused_adamw_kernel(
@@ -36,25 +78,83 @@ if triton is not None:
         BLOCK_SIZE: tl.constexpr,
     ):
         indices = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
-        mask = indices < n_elements
-        parameter = tl.load(parameter_ptr + indices, mask=mask, other=0.0).to(tl.float32)
-        gradient = tl.load(gradient_ptr + indices, mask=mask, other=0.0).to(tl.float32)
-        m = tl.load(exp_avg_ptr + indices, mask=mask, other=0.0).to(tl.float32)
-        v = tl.load(exp_avg_sq_ptr + indices, mask=mask, other=0.0).to(tl.float32)
-        updated_m = beta1 * m + one_minus_beta1 * gradient
-        updated_v = beta2 * v + one_minus_beta2 * (gradient * gradient)
-        denominator = tl.sqrt(updated_v) / correction2_sqrt + eps
-        updated_parameter = parameter * decay - step_size * (updated_m / denominator)
+        _adamw_tile(
+            parameter_ptr,
+            gradient_ptr,
+            exp_avg_ptr,
+            exp_avg_sq_ptr,
+            indices,
+            indices < n_elements,
+            beta1,
+            beta2,
+            one_minus_beta1,
+            one_minus_beta2,
+            step_size,
+            correction2_sqrt,
+            decay,
+            eps,
+            tl.cast(seed, tl.uint32),
+            logical_offset,
+            ROUND_M,
+            ROUND_V,
+        )
 
-        global_index = indices.to(tl.uint32) + tl.cast(logical_offset, tl.uint32)
-        update_key = tl.cast(seed, tl.uint32)
-        counter_m = global_index + _u32_hash(update_key)
-        counter_v = global_index + _u32_hash(update_key ^ 1)
-        stored_m = ROUND_M(updated_m, counter_m, exp_avg_ptr.dtype.element_ty)
-        stored_v = ROUND_V(updated_v, counter_v, exp_avg_sq_ptr.dtype.element_ty)
-        tl.store(parameter_ptr + indices, updated_parameter, mask=mask)
-        tl.store(exp_avg_ptr + indices, stored_m, mask=mask)
-        tl.store(exp_avg_sq_ptr + indices, stored_v, mask=mask)
+    @triton.jit(do_not_specialize=RNG_WORD_ARGS)
+    def _multi_adamw_kernel(
+        meta_ptr,
+        chunks_ptr,
+        pointers_ptr,
+        parameter_witness,
+        gradient_witness,
+        exp_avg_witness,
+        exp_avg_sq_witness,
+        beta1,
+        beta2,
+        one_minus_beta1,
+        one_minus_beta2,
+        step_size,
+        correction2_sqrt,
+        decay,
+        eps,
+        seed_lo,
+        seed_hi,
+        step_lo,
+        step_hi,
+        ROUND_M: tl.constexpr,
+        ROUND_V: tl.constexpr,
+        BLOCK_SIZE: tl.constexpr,
+        CHUNK_TILES: tl.constexpr,
+    ):
+        row, n_elements, param_index, shard_start, start, tiles = _chunk_info(
+            meta_ptr, chunks_ptr, BLOCK_SIZE, CHUNK_TILES
+        )
+        parameter_ptr = tl.load(pointers_ptr + 4 * row).to(parameter_witness.dtype)
+        gradient_ptr = tl.load(pointers_ptr + 4 * row + 1).to(gradient_witness.dtype)
+        exp_avg_ptr = tl.load(pointers_ptr + 4 * row + 2).to(exp_avg_witness.dtype)
+        exp_avg_sq_ptr = tl.load(pointers_ptr + 4 * row + 3).to(exp_avg_sq_witness.dtype)
+        key = _update_key(seed_lo, seed_hi, step_lo, step_hi, param_index)
+        for tile in range(tiles):
+            indices = start + tile * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+            _adamw_tile(
+                parameter_ptr,
+                gradient_ptr,
+                exp_avg_ptr,
+                exp_avg_sq_ptr,
+                indices,
+                indices < n_elements,
+                beta1,
+                beta2,
+                one_minus_beta1,
+                one_minus_beta2,
+                step_size,
+                correction2_sqrt,
+                decay,
+                eps,
+                key,
+                shard_start,
+                ROUND_M,
+                ROUND_V,
+            )
 
 
 @torch.no_grad()
@@ -111,14 +211,7 @@ def triton_adamw_step_(
             exp_avg,
             exp_avg_sq,
             parameter.numel(),
-            beta1,
-            beta2,
-            1.0 - beta1,
-            1.0 - beta2,
-            lr / (1.0 - beta1**step),
-            (1.0 - beta2**step) ** 0.5,
-            1.0 - lr * weight_decay,
-            eps,
+            *_adamw_scalars(lr, beta1, beta2, eps, weight_decay, step),
             int(seed) & 0xFFFFFFFF,
             int(offset) & 0xFFFFFFFF,
             ROUND_M=get_triton_rounding(resolved[0].dtype, resolved[0].rounding),
@@ -126,6 +219,19 @@ def triton_adamw_step_(
             BLOCK_SIZE=block_size,
             num_warps=4,
         )
+
+
+def _adamw_scalars(lr, beta1, beta2, eps, weight_decay, step):
+    return (
+        beta1,
+        beta2,
+        1.0 - beta1,
+        1.0 - beta2,
+        lr / (1.0 - beta1**step),
+        (1.0 - beta2**step) ** 0.5,
+        1.0 - lr * weight_decay,
+        eps,
+    )
 
 
 def _validate_hyperparameters(lr, betas, eps, weight_decay):
@@ -180,21 +286,34 @@ class AdamWTriton(AdamWReferenceSR):
             {"block_size": self.defaults.get("block_size", self._initial_block_size), **param_group}
         )
 
-    def _step_parameter(self, parameter, state, group, formats, step, seed, offset):
+    def _step_group(self, group, formats, items, rng_step):
+        items = list(items)
+        if not items:
+            return
+        require_triton()
+        launches = prepare_group(self, group, formats, items, validate_update_device)
         beta1, beta2 = group["betas"]
-        triton_adamw_step_(
-            parameter,
-            parameter.grad,
-            state["exp_avg"],
-            state["exp_avg_sq"],
-            lr=group["lr"],
-            beta1=beta1,
-            beta2=beta2,
-            eps=group["eps"],
-            weight_decay=group["weight_decay"],
-            step=step,
-            formats=formats,
-            seed=seed,
-            offset=offset,
-            block_size=group["block_size"],
-        )
+        lr, eps, weight_decay = group["lr"], group["eps"], group["weight_decay"]
+        scalars = {
+            step: _adamw_scalars(lr, beta1, beta2, eps, weight_decay, step)
+            for _, step, _, _ in launches
+        }
+        words = (*split_words(group["sr_seed"]), *split_words(rng_step))
+        round_m, round_v = (get_triton_rounding(fmt.dtype, fmt.rounding) for fmt in formats)
+        for device, step, rows, tables in launches:
+            with torch.cuda.device(device):
+                _multi_adamw_kernel[(tables.chunks.numel(),)](
+                    tables.meta,
+                    tables.chunks,
+                    tables.pointers,
+                    *rows[0].tensors,
+                    *scalars[step],
+                    *words,
+                    ROUND_M=round_m,
+                    ROUND_V=round_v,
+                    BLOCK_SIZE=group["block_size"],
+                    CHUNK_TILES=CHUNK_TILES,
+                    num_warps=4,
+                )
+        for _, state, _, step, _ in items:
+            state["step"] = step

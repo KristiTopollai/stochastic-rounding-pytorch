@@ -8,11 +8,41 @@ from sr_states.formats import StateFormat, resolve_formats
 from sr_states.optim.sgd import SGDMReferenceSR
 from sr_states.rounding import get_triton_rounding
 
-from ._common import require_triton, tl, triton, validate_fp8_device
+from ._common import require_triton, tl, triton, validate_fp8_device, validate_update_device
+from ._keys import RNG_WORD_ARGS, split_words
+from ._multi_tensor import CHUNK_TILES, prepare_group
 from ._optimizer import nonnegative, validate_options, validate_tensors
 
 if triton is not None:
-    from .sr_cast import _u32_hash
+    from ._common import _chunk_info
+    from ._keys import _state_key, _update_key
+
+    @triton.jit
+    def _sgdm_tile(
+        parameter_ptr,
+        gradient_ptr,
+        momentum_ptr,
+        offsets,
+        mask,
+        learning_rate,
+        momentum_factor,
+        key,
+        logical_offset,
+        ROUND: tl.constexpr,
+    ):
+        # Storage may be BF16, but the optimizer recurrence is evaluated in
+        # FP32 before either result is written back to its destination dtype.
+        parameter = tl.load(parameter_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+        gradient = tl.load(gradient_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+        momentum = tl.load(momentum_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+        updated_momentum = momentum_factor * momentum + gradient
+        updated_parameter = parameter - learning_rate * updated_momentum
+
+        counter = offsets.to(tl.uint32) + _state_key(key, 0) + tl.cast(logical_offset, tl.uint32)
+        stored_momentum = ROUND(updated_momentum, counter, momentum_ptr.dtype.element_ty)
+
+        tl.store(parameter_ptr + offsets, updated_parameter, mask=mask)
+        tl.store(momentum_ptr + offsets, stored_momentum, mask=mask)
 
     @triton.jit
     def _fused_sgdm_kernel(
@@ -28,25 +58,58 @@ if triton is not None:
         BLOCK_SIZE: tl.constexpr,
     ):
         offsets = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
-        mask = offsets < n_elements
-
-        # Storage may be BF16, but the optimizer recurrence is evaluated in
-        # FP32 before either result is written back to its destination dtype.
-        parameter = tl.load(parameter_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
-        gradient = tl.load(gradient_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
-        momentum = tl.load(momentum_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
-        updated_momentum = momentum_factor * momentum + gradient
-        updated_parameter = parameter - learning_rate * updated_momentum
-
-        counter = (
-            offsets.to(tl.uint32)
-            + _u32_hash(tl.cast(seed, tl.uint32))
-            + tl.cast(logical_offset, tl.uint32)
+        _sgdm_tile(
+            parameter_ptr,
+            gradient_ptr,
+            momentum_ptr,
+            offsets,
+            offsets < n_elements,
+            learning_rate,
+            momentum_factor,
+            tl.cast(seed, tl.uint32),
+            logical_offset,
+            ROUND,
         )
-        stored_momentum = ROUND(updated_momentum, counter, momentum_ptr.dtype.element_ty)
 
-        tl.store(parameter_ptr + offsets, updated_parameter, mask=mask)
-        tl.store(momentum_ptr + offsets, stored_momentum, mask=mask)
+    @triton.jit(do_not_specialize=RNG_WORD_ARGS)
+    def _multi_sgdm_kernel(
+        meta_ptr,
+        chunks_ptr,
+        pointers_ptr,
+        parameter_witness,
+        gradient_witness,
+        momentum_witness,
+        learning_rate,
+        momentum_factor,
+        seed_lo,
+        seed_hi,
+        step_lo,
+        step_hi,
+        ROUND: tl.constexpr,
+        BLOCK_SIZE: tl.constexpr,
+        CHUNK_TILES: tl.constexpr,
+    ):
+        row, n_elements, param_index, shard_start, start, tiles = _chunk_info(
+            meta_ptr, chunks_ptr, BLOCK_SIZE, CHUNK_TILES
+        )
+        parameter_ptr = tl.load(pointers_ptr + 3 * row).to(parameter_witness.dtype)
+        gradient_ptr = tl.load(pointers_ptr + 3 * row + 1).to(gradient_witness.dtype)
+        momentum_ptr = tl.load(pointers_ptr + 3 * row + 2).to(momentum_witness.dtype)
+        key = _update_key(seed_lo, seed_hi, step_lo, step_hi, param_index)
+        for tile in range(tiles):
+            offsets = start + tile * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+            _sgdm_tile(
+                parameter_ptr,
+                gradient_ptr,
+                momentum_ptr,
+                offsets,
+                offsets < n_elements,
+                learning_rate,
+                momentum_factor,
+                key,
+                shard_start,
+                ROUND,
+            )
 
 
 @torch.no_grad()
@@ -148,15 +211,27 @@ class SGDMTriton(SGDMReferenceSR):
             {"block_size": self.defaults.get("block_size", self._initial_block_size), **param_group}
         )
 
-    def _step_parameter(self, parameter, state, group, formats, step, seed, offset):
-        triton_sgdm_step_(
-            parameter,
-            parameter.grad,
-            state["momentum_buffer"],
-            lr=group["lr"],
-            momentum_factor=group["momentum"],
-            formats=formats,
-            seed=seed,
-            offset=offset,
-            block_size=group["block_size"],
-        )
+    def _step_group(self, group, formats, items, rng_step):
+        items = list(items)
+        if not items:
+            return
+        require_triton()
+        launches = prepare_group(self, group, formats, items, validate_update_device)
+        fmt = formats[0]
+        rounding = get_triton_rounding(fmt.dtype, fmt.rounding)
+        words = (*split_words(group["sr_seed"]), *split_words(rng_step))
+        for device, _, rows, tables in launches:
+            with torch.cuda.device(device):
+                _multi_sgdm_kernel[(tables.chunks.numel(),)](
+                    tables.meta,
+                    tables.chunks,
+                    tables.pointers,
+                    *rows[0].tensors,
+                    group["lr"],
+                    group["momentum"],
+                    *words,
+                    ROUND=rounding,
+                    BLOCK_SIZE=group["block_size"],
+                    CHUNK_TILES=CHUNK_TILES,
+                    num_warps=4,
+                )

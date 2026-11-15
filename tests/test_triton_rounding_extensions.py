@@ -11,10 +11,10 @@ from triton.compiler import ASTSource
 import sr_states.rounding as rounding_module
 from sr_states import register_rounding
 from sr_states.rounding import get_triton_rounding
-from sr_states.triton.adamw import _fused_adamw_kernel
+from sr_states.triton.adamw import _fused_adamw_kernel, _multi_adamw_kernel
 from sr_states.triton.cast import _cast_kernel
 from sr_states.triton.rounding import nearest as triton_nearest
-from sr_states.triton.sgd import _fused_sgdm_kernel
+from sr_states.triton.sgd import _fused_sgdm_kernel, _multi_sgdm_kernel
 
 
 @triton.jit
@@ -41,7 +41,7 @@ def custom_rounding(monkeypatch):
     )
 
 
-@pytest.mark.parametrize("kind", ["cast", "sgdm", "adamw"])
+@pytest.mark.parametrize("kind", ["cast", "sgdm", "adamw", "multi_sgdm", "multi_adamw"])
 @pytest.mark.parametrize(
     "dtype,mode",
     [
@@ -59,7 +59,13 @@ def custom_rounding(monkeypatch):
     ],
 )
 def test_rounding_callback_compiles_without_gpu(kind, dtype, mode, custom_rounding):
-    kernels = {"cast": _cast_kernel, "sgdm": _fused_sgdm_kernel, "adamw": _fused_adamw_kernel}
+    kernels = {
+        "cast": _cast_kernel,
+        "sgdm": _fused_sgdm_kernel,
+        "adamw": _fused_adamw_kernel,
+        "multi_sgdm": _multi_sgdm_kernel,
+        "multi_adamw": _multi_adamw_kernel,
+    }
     kernel = kernels[kind]
     state_type = {
         torch.float32: "fp32",
@@ -71,14 +77,19 @@ def test_rounding_callback_compiles_without_gpu(kind, dtype, mode, custom_roundi
     states = {"output_ptr", "momentum_ptr", "exp_avg_ptr", "exp_avg_sq_ptr"}
     signature = {}
     constants = {"BLOCK_SIZE": 256}
-    for name in ("ROUND_M", "ROUND_V") if kind == "adamw" else ("ROUND",):
+    if kind.startswith("multi"):
+        constants["CHUNK_TILES"] = 1
+    for name in ("ROUND_M", "ROUND_V") if kind.endswith("adamw") else ("ROUND",):
         constants[name] = get_triton_rounding(dtype, mode)
     for name in kernel.arg_names:
         if name in constants:
             continue
-        if name.endswith("_ptr"):
-            signature[name] = "*" + (state_type if name in states else "fp32")
-        elif name == "n_elements":
+        if name in {"meta_ptr", "pointers_ptr", "chunks_ptr"}:
+            signature[name] = "*i32" if name == "chunks_ptr" else "*i64"
+        elif name.endswith(("_ptr", "_witness")):
+            role = name.replace("_witness", "_ptr")
+            signature[name] = "*" + (state_type if role in states else "fp32")
+        elif name in {"n_elements", "seed_lo", "seed_hi", "step_lo", "step_hi"}:
             signature[name] = "i32"
         elif name in {"seed", "logical_offset"}:
             signature[name] = "u32"
@@ -115,22 +126,27 @@ def test_custom_triton_rounding_matches_reference_on_gpu(kind, custom_rounding):
 
 
 @pytest.mark.parametrize("mode", ["nearest", "stochastic"])
-def test_mixed_fp8_adamw_compiles_without_gpu(mode):
-    kernel = _fused_adamw_kernel
+@pytest.mark.parametrize("chunk_tiles", [None, 1, 2])
+def test_mixed_fp8_adamw_compiles_without_gpu(mode, chunk_tiles):
+    kernel = _fused_adamw_kernel if chunk_tiles is None else _multi_adamw_kernel
     constants = {
         "ROUND_M": get_triton_rounding(torch.float8_e4m3fn, mode),
         "ROUND_V": get_triton_rounding(torch.float8_e5m2, mode),
         "BLOCK_SIZE": 256,
     }
+    if chunk_tiles is not None:
+        constants["CHUNK_TILES"] = chunk_tiles
     signature = {}
     for name in kernel.arg_names:
         if name in constants:
             continue
-        if name.endswith("_ptr"):
+        if name in {"meta_ptr", "pointers_ptr", "chunks_ptr"}:
+            signature[name] = "*i32" if name == "chunks_ptr" else "*i64"
+        elif name.endswith(("_ptr", "_witness")):
             signature[name] = {"exp_avg_ptr": "*fp8e4nv", "exp_avg_sq_ptr": "*fp8e5"}.get(
-                name, "*fp32"
+                name.replace("_witness", "_ptr"), "*fp32"
             )
-        elif name == "n_elements":
+        elif name in {"n_elements", "seed_lo", "seed_hi", "step_lo", "step_hi"}:
             signature[name] = "i32"
         elif name in {"seed", "logical_offset"}:
             signature[name] = "u32"
@@ -143,3 +159,33 @@ def test_mixed_fp8_adamw_compiles_without_gpu(mode):
     )
     assert result.asm["ptx"]
     assert result.asm["cubin"]
+
+
+@triton.jit(do_not_specialize=["seed_lo", "seed_hi", "step_lo", "step_hi"])
+def _pointer_loop_spike(
+    pointers, witness, sizes, seed_lo, seed_hi, step_lo, step_hi, BLOCK: tl.constexpr
+):
+    ptr = tl.load(pointers).to(witness.dtype)
+    numel = tl.load(sizes)
+    value = seed_lo.to(tl.uint32) ^ seed_hi.to(tl.uint32)
+    value ^= step_lo.to(tl.uint32) ^ step_hi.to(tl.uint32)
+    for start in range(0, numel, BLOCK):
+        indices = start + tl.arange(0, BLOCK)
+        tl.store(ptr + indices, value, indices < numel)
+
+
+def test_pointer_loop_spike_compiles_without_gpu():
+    kernel = _pointer_loop_spike
+    assert all(p.do_not_specialize for p in kernel.params if p.name.startswith(("seed", "step")))
+    signature = {
+        "pointers": "*i64",
+        "witness": "*fp32",
+        "sizes": "*i64",
+        **dict.fromkeys(("seed_lo", "seed_hi", "step_lo", "step_hi"), "i32"),
+    }
+    result = triton.compile(
+        ASTSource(kernel, signature, {"BLOCK": 128}),
+        target=GPUTarget("cuda", 90, 32),
+        options={"num_warps": 4},
+    )
+    assert result.asm["ptx"] and result.asm["cubin"]

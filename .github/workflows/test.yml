@@ -17,6 +17,8 @@ jobs:
       - run: pip install -e '.[dev,triton]'
       # Compile all formats/rules and mixed E4M3/E5M2 AdamW; no GPU driver needed.
       - run: pytest tests/test_triton_rounding_extensions.py
+      - run: pip install 'triton==3.0.0'
+      - run: pytest tests/test_triton_rounding_extensions.py -k pointer_loop_spike
   cpu:
     runs-on: ubuntu-latest
     strategy:
