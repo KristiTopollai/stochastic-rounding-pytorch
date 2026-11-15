@@ -24,7 +24,7 @@ class StateOptimizer(Optimizer):
     Declare ``_state_names`` and implement ``_compute(p32, g32, states32,
     group, step) -> (new_p32, tuple_of_new_states32)``. The base supplies zero
     initialization, per-state storage, counters, closures and checkpoints.
-    Optimizers with fused/compiled implementations can override ``_step_parameter``.
+    Optimizers can override ``_step_parameter`` or batch a group in ``_step_group``.
     Set ``_forced_rounding`` to fix every state's rule; formats, shorthands,
     group overrides and checkpoints then choose only each state's dtype.
     """
@@ -151,6 +151,36 @@ class StateOptimizer(Optimizer):
             raise NotImplementedError("DTensor optimizer parameters require FSDP2 support")
         return 0
 
+    def _group_items(self, group, formats, first_index):
+        for param_index, parameter in enumerate(group["params"], start=first_index):
+            if parameter.grad is None:
+                continue
+            if parameter.grad.is_sparse:
+                raise RuntimeError(f"{type(self).__name__} does not support sparse gradients")
+            offset = self._shard_start(parameter)
+            _validate_rng_numel(parameter.numel())
+            state = self.state[parameter]
+            for name, fmt in zip(self._state_names, formats):
+                if name not in state:
+                    state[name] = torch.zeros_like(
+                        parameter, dtype=fmt.dtype, memory_format=torch.preserve_format
+                    )
+                elif state[name].dtype != fmt.dtype:
+                    raise ValueError(f"{name} dtype does not match its state format")
+            yield parameter, state, param_index, state.get("step", 0) + 1, offset
+
+    def _step_group(self, group, formats, items, rng_step):
+        """Consume (parameter, state, param_index, next_step, offset) items.
+
+        A batched override may collect the lazy iterator before updating. It
+        owns recording each successful update's step if ``_uses_step`` is true.
+        """
+        for parameter, state, param_index, next_step, offset in items:
+            seed = update_key(group["sr_seed"], rng_step, param_index)
+            self._step_parameter(parameter, state, group, formats, next_step, seed, offset)
+            if self._uses_step:
+                state["step"] = next_step
+
     @torch.no_grad()
     def step(self, closure=None):
         loss = None
@@ -164,26 +194,8 @@ class StateOptimizer(Optimizer):
         first_index = 0
         for group in self.param_groups:
             formats = self._formats(group)
-            for param_index, parameter in enumerate(group["params"], start=first_index):
-                if parameter.grad is None:
-                    continue
-                if parameter.grad.is_sparse:
-                    raise RuntimeError(f"{type(self).__name__} does not support sparse gradients")
-                offset = self._shard_start(parameter)
-                _validate_rng_numel(parameter.numel())
-                state = self.state[parameter]
-                for name, fmt in zip(self._state_names, formats):
-                    if name not in state:
-                        state[name] = torch.zeros_like(
-                            parameter, dtype=fmt.dtype, memory_format=torch.preserve_format
-                        )
-                    elif state[name].dtype != fmt.dtype:
-                        raise ValueError(f"{name} dtype does not match its state format")
-                next_step = state.get("step", 0) + 1
-                seed = update_key(group["sr_seed"], rng_step, param_index)
-                self._step_parameter(parameter, state, group, formats, next_step, seed, offset)
-                if self._uses_step:
-                    state["step"] = next_step
+            items = self._group_items(group, formats, first_index)
+            self._step_group(group, formats, items, rng_step)
             first_index += len(group["params"])
         return loss
 
