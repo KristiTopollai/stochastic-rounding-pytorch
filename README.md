@@ -38,6 +38,10 @@ BF16 stochastic rounding; optimizer arithmetic uses FP32.
 | Triton: `sr_states.triton` | `AdamWTriton` | `SGDMTriton` |
 
 Triton expects contiguous CUDA FP32/BF16 parameters and dense gradients.
+Each Triton optimizer group launches once per bucket of device and parameter
+and gradient dtypes. AdamW also separates parameters at different bias
+correction steps. Writable buffers within a group must not overlap any other
+active parameter, gradient, or state buffer.
 
 ### Choose state storage
 
@@ -135,6 +139,10 @@ rounding, parameter groups, counters, missing gradients, and checkpoints. See th
 [three-state example](tests/test_state_formats.py). Fused backends can override
 `_step_parameter(parameter, state, group, formats, step, seed, offset)`, where
 `seed` is the parameter update key and `offset` is the flat shard start.
+For group dispatch, override `_step_group(group, formats, items, rng_step)` as
+the Triton optimizers do. Its items contain the parameter, state, global
+parameter index, next parameter step, and shard start. The override records
+successful updates' step counters when `_uses_step` is enabled.
 Scaled or blockwise quantizers need an additional storage and
 metadata interface; `register_rounding` currently covers unscaled elementwise casts.
 
@@ -150,3 +158,18 @@ On a CUDA machine with Triton installed, capture the baseline and run GPU checks
 ```bash
 bash scripts/run_state_validation.sh results/raw/fp8-validation --tests-only
 ```
+
+For full optimizer step timings on 1- and 32-tensor quadratics and synthetic
+GPT-2 124M and Llama 3.2 1B parameter shapes:
+
+```bash
+python -m benchmarks.bench_optimizer_steps --problems quadratic gpt2 llama32-1b \
+  --sizes 1048576 16777216 --tensors 1 32 \
+  --methods torch_fused triton_fp32 triton_sr triton_fp8
+```
+
+The model-shaped workloads use FP32 parameters, fixed synthetic gradients and no
+model execution. The benchmark records synchronized wall time, CUDA event time
+and host submission time. PyTorch fused is a timing-only FP32 state baseline.
+Omit `--tests-only` from the validation script to time the current tree and the
+local pre-batching revision with the same harness.
