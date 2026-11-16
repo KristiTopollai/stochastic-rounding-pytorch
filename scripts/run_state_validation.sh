@@ -62,6 +62,15 @@ python -m pytest 2>&1 | tee "$result_dir/tests.log"
 if [[ "$tests_only" == 1 ]]; then
   exit 0
 fi
+# Use the same benchmark harness with the library from before batching.
+# A local archived tree avoids changing the current checkout or fetching anything.
+source_root=$PWD
+result_dir=$(cd "$result_dir" && pwd)
+optimizer_base=$(git rev-parse --verify "${SR_STATES_OPTIMIZER_BASE:-c0f6c1d}^{commit}")
+optimizer_base_dir="$result_dir/pre-multi-tensor-source"
+mkdir "$optimizer_base_dir"
+git archive "$optimizer_base" sr_states | tar -x -C "$optimizer_base_dir"
+printf '%s\n' "$optimizer_base" > "$result_dir/optimizer-steps-baseline-commit.txt"
 for repeat in 0 1 2; do
   for optimizer in sgdm adamw; do
     python -m "benchmarks.bench_$optimizer" --sizes 1024 1048576 16777216 \
@@ -71,7 +80,17 @@ for repeat in 0 1 2; do
       --order-seed "$repeat" --output "$result_dir/$optimizer-multi-r$repeat.csv" \
       2>&1 | tee "$result_dir/$optimizer-multi-r$repeat.log"
   done
-  python -m benchmarks.bench_optimizer_steps --sizes 1048576 16777216 --tensors 1 32 \
-    --order-seed "$repeat" --output "$result_dir/optimizer-steps-r$repeat.csv" \
+  step_args=(
+    --problems quadratic gpt2 llama32-1b --sizes 1048576 16777216 --tensors 1 32
+    --methods torch_fused triton_fp32 triton_sr triton_fp8 --order-seed "$repeat"
+  )
+  python -m benchmarks.bench_optimizer_steps "${step_args[@]}" \
+    --output "$result_dir/optimizer-steps-r$repeat.csv" \
     2>&1 | tee "$result_dir/optimizer-steps-r$repeat.log"
+  (
+    cd "$optimizer_base_dir"
+    PYTHONPATH="$source_root${PYTHONPATH:+:$PYTHONPATH}" \
+      python -m benchmarks.bench_optimizer_steps "${step_args[@]}" \
+      --output "$result_dir/optimizer-steps-baseline-r$repeat.csv"
+  ) 2>&1 | tee "$result_dir/optimizer-steps-baseline-r$repeat.log"
 done

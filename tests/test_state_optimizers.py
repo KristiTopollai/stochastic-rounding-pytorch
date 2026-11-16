@@ -4,8 +4,7 @@ import pytest
 import torch
 
 from sr_states import AdamWReferenceSR, SGDMReferenceSR
-from sr_states.reference.adamw import adamw_step_
-from sr_states.reference.sgd import sgdm_step_
+from sr_states.optim._state import StateOptimizer
 from sr_states.triton import AdamWTriton, SGDMTriton
 
 OPTIMIZERS = [SGDMReferenceSR, AdamWReferenceSR, SGDMTriton, AdamWTriton]
@@ -47,15 +46,9 @@ def test_checkpoint_keeps_state_precision(optimizer_class, state_dtype, paramete
 
 @pytest.fixture
 def cpu_state_kernels(monkeypatch):
-    # Exercise optimizer bookkeeping on CPU; GPU tests cover the actual kernels.
-    def sgdm(p, g, m, *, block_size, **kwargs):
-        sgdm_step_(p, g, m, **kwargs)
-
-    def adamw(p, g, m, v, *, block_size, **kwargs):
-        adamw_step_(p, g, m, v, **kwargs)
-
-    monkeypatch.setattr("sr_states.triton.sgd.triton_sgdm_step_", sgdm)
-    monkeypatch.setattr("sr_states.triton.adamw.triton_adamw_step_", adamw)
+    # Exercise shared bookkeeping on CPU; the real grouped kernels have separate GPU tests.
+    for cls in (SGDMTriton, AdamWTriton):
+        monkeypatch.setattr(cls, "_step_group", StateOptimizer._step_group)
 
 
 @pytest.mark.parametrize("optimizer_class", OPTIMIZERS)

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Triton optimizer classes dispatch one fused update per group bucket. AdamW
+  separates parameters with different bias correction steps. Overlapping
+  writable buffers within a group are rejected before any update launch.
+- Added the `_step_group` extension hook. Triton classes now use it instead of
+  `_step_parameter`; Triton subclasses that customize updates should override
+  `_step_group`. The standalone single-tensor update functions remain available.
+
 - Optimizer RNG streams use the group seed, global optimizer step, parameter
   position, state index, and flat global element index. Checkpoints now store
   `sr_step`. Legacy checkpoints preserve formats and state bytes and start the

@@ -1,4 +1,4 @@
-"""Full optimizer.step() timing on synthetic quadratics and MLP regression."""
+"""Full optimizer.step() timing on synthetic problems and model-shaped tensors."""
 
 from __future__ import annotations
 
@@ -20,9 +20,54 @@ import torch.nn.functional as F
 from benchmarks._utils import positive_int, write_rows
 from sr_states import AdamWReferenceRN, AdamWReferenceSR, SGDMReferenceRN, SGDMReferenceSR
 from sr_states.compiled import AdamWCompiledSR, SGDMCompiledSR
+from sr_states.formats import StateFormat
 from sr_states.triton import AdamWTriton, SGDMTriton, is_triton_available
 
 METHODS = ("native_nr", "triton_nr", "eager_sr", "compiled_sr", "triton_sr")
+BATCH_METHODS = ("torch_fused", "triton_fp32", "triton_sr", "triton_fp8")
+ALL_METHODS = (*METHODS, *(name for name in BATCH_METHODS if name not in METHODS))
+FP8 = (torch.float8_e4m3fn, torch.float8_e5m2)
+
+# GPT-2 small and Llama 3.2 1B use tied token embeddings / output projection.
+MODEL_SHAPES = {
+    "gpt2": (
+        (50257, 768),
+        (1024, 768),
+        *(
+            (768,),
+            (768,),
+            (768, 2304),
+            (2304,),
+            (768, 768),
+            (768,),
+            (768,),
+            (768,),
+            (768, 3072),
+            (3072,),
+            (3072, 768),
+            (768,),
+        )
+        * 12,
+        (768,),
+        (768,),
+    ),
+    "llama32-1b": (
+        (128256, 2048),
+        *(
+            (2048,),
+            (2048, 2048),
+            (512, 2048),
+            (512, 2048),
+            (2048, 2048),
+            (2048,),
+            (8192, 2048),
+            (8192, 2048),
+            (2048, 8192),
+        )
+        * 16,
+        (2048,),
+    ),
+}
 
 
 class Problem:
@@ -109,6 +154,32 @@ class MLPRegression(Problem):
         self.loss().backward()
 
 
+class ModelShapes(Problem):
+    """Time optimizer traffic on FP32 tensors without allocating a model or activations."""
+
+    def __init__(self, shapes, *, device, seed):
+        self.seed = seed
+        self.device = device
+        self.parameters = [
+            torch.nn.Parameter(torch.empty(shape, device=device)) for shape in shapes
+        ]
+        self.reset()
+
+    @torch.no_grad()
+    def reset(self):
+        generator = torch.Generator(device=self.device).manual_seed(self.seed)
+        for p in self.parameters:
+            p.normal_(std=0.02, generator=generator)
+            p.grad = None
+
+    def prepare_gradients(self):
+        if self.parameters[0].grad is not None:
+            return
+        generator = torch.Generator(device=self.device).manual_seed(self.seed + 1)
+        for p in self.parameters:
+            p.grad = torch.empty_like(p).normal_(std=0.25, generator=generator)
+
+
 class CompilationCounter:
     """Count actual graph compilations, including any accidental timed compilation."""
 
@@ -145,38 +216,72 @@ class OptimizerCase:
         self.problem.reset()
         self.optimizer.state.clear()
         for group in self.optimizer.param_groups:
-            group["sr_step"] = 0
+            if "sr_step" in group:
+                group["sr_step"] = 0
 
     def advance(self):
         self.problem.prepare_gradients()
         self.optimizer.step()
+
+    @property
+    def timing_only(self):
+        return self.method == "torch_fused"
+
+    @property
+    def state_names(self):
+        if self.timing_only:
+            return ("exp_avg", "exp_avg_sq") if self.kind == "adamw" else ("momentum_buffer",)
+        return self.optimizer._state_names
 
     def compilation_count(self):
         return self.compilation.count if self.compilation is not None else 0
 
 
 def build_case(problem, kind, method, *, seed=7, block_size=256, compile_backend="inductor"):
-    if kind not in {"adamw", "sgdm"} or method not in METHODS:
+    if kind not in {"adamw", "sgdm"} or method not in ALL_METHODS:
         raise ValueError("unknown optimizer or method")
-    classes = {
-        "adamw": (AdamWReferenceRN, AdamWTriton, AdamWReferenceSR, AdamWCompiledSR, AdamWTriton),
-        "sgdm": (SGDMReferenceRN, SGDMTriton, SGDMReferenceSR, SGDMCompiledSR, SGDMTriton),
-    }
+    adamw = kind == "adamw"
+    triton_cls = AdamWTriton if adamw else SGDMTriton
     kwargs = optimizer_options(kind, seed)
-    kwargs["state_dtype"] = torch.bfloat16
-    kwargs["rounding"] = "nearest" if method.endswith("nr") else "stochastic"
     tracker = None
-    if method.startswith("triton"):
-        kwargs["block_size"] = block_size
-    elif method == "compiled_sr":
-        tracker = CompilationCounter(compile_backend)
-        kwargs["compile_kwargs"] = {"backend": tracker}
-    optimizer = classes[kind][METHODS.index(method)](problem.parameters, **kwargs)
+    if method == "torch_fused":
+        kwargs.pop("seed")
+        cls = torch.optim.AdamW if adamw else torch.optim.SGD
+        kwargs["fused"] = True
+    else:
+        kwargs["state_dtype"] = torch.float32 if method == "triton_fp32" else torch.bfloat16
+        kwargs["rounding"] = (
+            "nearest" if method.endswith("nr") or method == "triton_fp32" else "stochastic"
+        )
+        if method.startswith("triton"):
+            cls = triton_cls
+            kwargs["block_size"] = block_size
+            if method == "triton_fp8":
+                del kwargs["state_dtype"], kwargs["rounding"]
+                kwargs["state_format"] = (
+                    {
+                        "exp_avg": StateFormat(torch.float8_e4m3fn),
+                        "exp_avg_sq": StateFormat(torch.bfloat16),
+                    }
+                    if adamw
+                    else StateFormat(torch.float8_e4m3fn)
+                )
+        elif method == "compiled_sr":
+            cls = AdamWCompiledSR if adamw else SGDMCompiledSR
+            tracker = CompilationCounter(compile_backend)
+            kwargs["compile_kwargs"] = {"backend": tracker}
+        elif method == "native_nr":
+            cls = AdamWReferenceRN if adamw else SGDMReferenceRN
+        else:
+            cls = AdamWReferenceSR if adamw else SGDMReferenceSR
+    optimizer = cls(problem.parameters, **kwargs)
     return OptimizerCase(problem, optimizer, kind, method, tracker)
 
 
 def validate_case(case, *, steps=3):
     """Compare each step to eager FP32 math from the same current state and gradient."""
+    if case.timing_only:
+        return
     reference_class = AdamWReferenceSR if case.kind == "adamw" else SGDMReferenceSR
     for _ in range(steps):
         case.problem.prepare_gradients()
@@ -192,12 +297,15 @@ def validate_case(case, *, steps=3):
         for actual, expected in zip(case.problem.parameters, expected_parameters):
             torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-6)
             assert actual.dtype == actual.grad.dtype == torch.float32
-            for name in case.optimizer._state_names:
+            for name in case.state_names:
                 value = case.optimizer.state[actual][name]
-                assert value.dtype == torch.bfloat16
-                torch.testing.assert_close(
-                    value, reference.state[expected][name], rtol=8e-3, atol=1e-6
-                )
+                ref = reference.state[expected][name]
+                assert value.dtype == ref.dtype
+                if value.dtype in FP8:
+                    torch.testing.assert_close(value.float(), ref.float(), rtol=0.125, atol=2**-9)
+                else:
+                    rtol = 1e-5 if value.dtype == torch.float32 else 8e-3
+                    torch.testing.assert_close(value, ref, rtol=rtol, atol=1e-6)
             if case.kind == "adamw":
                 assert case.optimizer.state[actual]["step"] == reference.state[expected]["step"]
         assert case.optimizer._rng_step() == reference._rng_step()
@@ -248,8 +356,9 @@ def measure_steps(case, *, warmup, repetitions):
     for parameter in case.problem.parameters:
         if not torch.isfinite(parameter).all():
             raise RuntimeError("synthetic optimization produced nonfinite parameters")
-        for name in case.optimizer._state_names:
-            if not torch.isfinite(case.optimizer.state[parameter][name]).all():
+        for name in case.state_names:
+            value = case.optimizer.state[parameter][name]
+            if not torch.isfinite(value.float() if value.dtype in FP8 else value).all():
                 raise RuntimeError("synthetic optimization produced nonfinite states")
     return {"wall": wall, "cuda": cuda, "submit": submit}
 
@@ -267,6 +376,16 @@ def summarize(samples):
 def make_row(case, samples, *, workload, args):
     import triton
 
+    state = case.optimizer.state[case.problem.parameters[0]]
+    dtype_names = {
+        torch.float32: "fp32",
+        torch.bfloat16: "bf16",
+        torch.float8_e4m3fn: "fp8_e4m3",
+    }
+    group = case.optimizer.param_groups[0]
+    hyperparameters = optimizer_options(case.kind, args.seed)
+    if case.timing_only:
+        del hyperparameters["seed"]
     row = {
         "optimizer": case.kind,
         "problem": workload,
@@ -276,8 +395,12 @@ def make_row(case, samples, *, workload, args):
         "tensors": len(case.problem.parameters),
         "shapes": json.dumps([list(p.shape) for p in case.problem.parameters]),
         "parameter_dtype": "fp32",
-        "state_dtype": "bf16",
-        "rounding": next(iter(case.optimizer.param_groups[0]["state_format"].values()))["rounding"],
+        "state_dtype": "+".join(
+            dict.fromkeys(dtype_names[state[name].dtype] for name in case.state_names)
+        ),
+        "rounding": ""
+        if case.timing_only
+        else next(iter(group["state_format"].values()))["rounding"],
         "timing": "optimizer_step_synchronized_wall",
         **summarize(samples["wall"]),
         **{f"cuda_{key}": value for key, value in summarize(samples["cuda"]).items()},
@@ -286,6 +409,8 @@ def make_row(case, samples, *, workload, args):
         "speedup_vs_triton_nr": "",
         "cuda_speedup_vs_native_nr": "",
         "cuda_speedup_vs_triton_nr": "",
+        "speedup_vs_torch_fused": "",
+        "cuda_speedup_vs_torch_fused": "",
         "seed": args.seed,
         "order_seed": args.order_seed,
         "warmup": args.warmup,
@@ -293,17 +418,17 @@ def make_row(case, samples, *, workload, args):
         "rehearsal_steps": args.warmup + args.repetitions,
         "first_timed_step": args.warmup + 1,
         "last_timed_step": args.warmup + args.repetitions,
-        "final_rng_step": case.optimizer._rng_step(),
+        "final_rng_step": "" if case.timing_only else case.optimizer._rng_step(),
         "state_bytes": sum(
             state[name].numel() * state[name].element_size()
             for state in case.optimizer.state.values()
-            for name in case.optimizer._state_names
+            for name in case.state_names
         ),
-        "hyperparameters": json.dumps(optimizer_options(case.kind, args.seed)),
+        "hyperparameters": json.dumps(hyperparameters),
         "block_size": args.block_size if case.method.startswith("triton") else "",
         "compiled_graphs": case.compilation_count(),
         "timed_compiled_graphs": 0,
-        "correctness": "passed",
+        "correctness": "timing_only" if case.timing_only else "passed",
         "gpu": torch.cuda.get_device_name(),
         "cuda_version": torch.version.cuda,
         "torch_version": torch.__version__,
@@ -317,8 +442,11 @@ def add_speedups(rows):
     for prefix in ("", "cuda_"):
         times = {row["method"]: row[f"{prefix}median_ms"] for row in rows}
         for row in rows:
-            for baseline in ("native_nr", "triton_nr"):
-                row[f"{prefix}speedup_vs_{baseline}"] = times[baseline] / row[f"{prefix}median_ms"]
+            for baseline in ("native_nr", "triton_nr", "torch_fused"):
+                if baseline in times:
+                    row[f"{prefix}speedup_vs_{baseline}"] = (
+                        times[baseline] / row[f"{prefix}median_ms"]
+                    )
 
 
 def parse_args(argv=None):
@@ -327,7 +455,16 @@ def parse_args(argv=None):
         "--optimizers", nargs="+", choices=("adamw", "sgdm"), default=["adamw", "sgdm"]
     )
     parser.add_argument(
-        "--problems", nargs="+", choices=("quadratic", "mlp"), default=["quadratic", "mlp"]
+        "--problems",
+        nargs="+",
+        choices=("quadratic", "mlp", *MODEL_SHAPES),
+        default=["quadratic", "mlp"],
+    )
+    parser.add_argument(
+        "--methods",
+        nargs="+",
+        choices=ALL_METHODS,
+        help="defaults to the original methods on quadratic/MLP, or batching comparisons on model shapes",
     )
     parser.add_argument(
         "--sizes",
@@ -372,6 +509,9 @@ def workloads(args):
                 "batch_size": args.batch_size,
             },
         )
+    for name, shapes in MODEL_SHAPES.items():
+        if name in args.problems:
+            yield name, {"shapes": shapes}
 
 
 def main(argv=None):
@@ -381,9 +521,16 @@ def main(argv=None):
     order = random.Random(args.order_seed)
     rows = []
     for workload, configuration in workloads(args):
-        problem_class = Quadratic if workload.startswith("quadratic") else MLPRegression
+        if workload in MODEL_SHAPES:
+            problem_class, defaults = ModelShapes, BATCH_METHODS
+        else:
+            problem_class = Quadratic if workload.startswith("quadratic") else MLPRegression
+            defaults = METHODS
         for kind in args.optimizers:
-            methods = list(METHODS)
+            methods = list(args.methods or defaults)
+            if torch.cuda.get_device_capability() < (8, 9) and "triton_fp8" in methods:
+                print(f"{workload}: skipping triton_fp8 (requires sm_89)", file=sys.stderr)
+                methods.remove("triton_fp8")
             order.shuffle(methods)
             group_rows = []
             for method in methods:

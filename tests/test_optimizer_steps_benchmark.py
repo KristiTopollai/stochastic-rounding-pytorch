@@ -227,3 +227,52 @@ def test_gpu_synthetic_full_steps(kind, method, name):
     row = bench.make_row(case, samples, workload=name, args=args)
     assert row["state_bytes"] == 2 * case.problem.elements * len(case.optimizer._state_names)
     assert row["timed_compiled_graphs"] == 0
+
+
+def test_model_shapes_and_reproducible_gradient_setup():
+    import math
+
+    args = bench.parse_args(["--problems", "gpt2", "llama32-1b"])
+    workloads = list(bench.workloads(args))
+    assert [
+        (name, len(config["shapes"]), sum(map(math.prod, config["shapes"])))
+        for name, config in workloads
+    ] == [
+        ("gpt2", 148, 124_439_808),
+        ("llama32-1b", 146, 1_235_814_400),
+    ]
+    model = bench.ModelShapes(((2, 3), (3,)), device="cpu", seed=91)
+    model.prepare_gradients()
+    initial = [(p.detach().clone(), p.grad.clone()) for p in model.parameters]
+    addresses = [p.grad.data_ptr() for p in model.parameters]
+    model.prepare_gradients()
+    assert [p.grad.data_ptr() for p in model.parameters] == addresses
+    with torch.no_grad():
+        for p in model.parameters:
+            p.add_(1)
+    model.reset()
+    assert all(p.grad is None for p in model.parameters)
+    model.prepare_gradients()
+    for p, (initial_p, initial_grad) in zip(model.parameters, initial):
+        assert torch.equal(p, initial_p)
+        assert torch.equal(p.grad, initial_grad)
+
+
+@pytest.mark.cuda
+@pytest.mark.skipif(not is_triton_available(), reason="CUDA and Triton required")
+@pytest.mark.parametrize("kind", ["adamw", "sgdm"])
+@pytest.mark.parametrize("method", ["torch_fused", "triton_fp32", "triton_fp8"])
+def test_model_shape_benchmark_methods(kind, method):
+    if method == "triton_fp8" and torch.cuda.get_device_capability() < (8, 9):
+        pytest.skip("FP8 requires sm_89")
+    shapes = bench.ModelShapes(((2, 3), (3,)), device="cuda", seed=91)
+    case = bench.build_case(shapes, kind, method)
+    bench.validate_case(case)
+    samples = bench.measure_steps(case, warmup=2, repetitions=3)
+    row = bench.make_row(case, samples, workload="small-shapes", args=bench.parse_args([]))
+    state_bpe = (
+        (3 if kind == "adamw" else 1) if method == "triton_fp8" else 4 * len(case.state_names)
+    )
+    assert row["state_bytes"] == state_bpe * shapes.elements
+    assert row["correctness"] == ("timing_only" if method == "torch_fused" else "passed")
+    assert row["final_rng_step"] == ("" if method == "torch_fused" else 5)
